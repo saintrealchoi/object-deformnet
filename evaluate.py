@@ -78,6 +78,7 @@ def detect():
             mrcnn_result = cPickle.load(f)
         num_insts = len(mrcnn_result['class_ids'])
         f_sRT = np.zeros((num_insts, 4, 4), dtype=float)
+        f_shape = np.zeros((num_insts, 1024, 3), dtype=float)
         f_size = np.zeros((num_insts, 3), dtype=float)
         # prepare frame data
         f_points, f_rgb, f_choose, f_catId, f_prior = [], [], [], [], []
@@ -159,6 +160,7 @@ def detect():
                 if pred_sRT is None:
                     pred_sRT = np.identity(4, dtype=float)
                 f_sRT[inst_idx] = pred_sRT
+                f_shape[inst_idx] = f_insts[i]
             t_umeyama += (time.time() - t_now)
             img_count += 1
             inst_count += len(valid_inst)
@@ -178,6 +180,7 @@ def detect():
         result['pred_scores'] = mrcnn_result['scores']
         result['pred_RTs'] = f_sRT
         result['pred_scales'] = f_size
+        result['pred_shape'] = f_shape
 
         image_short_path = '_'.join(img_path_parsing[-3:])
         save_path = os.path.join(result_dir, 'results_{}.pkl'.format(image_short_path))
@@ -269,6 +272,6 @@ def evaluate():
 if __name__ == '__main__':
     print('Detecting ...')
     print(torch.cuda.is_available())
-    detect()
+    # detect()
     print('Evaluating ...')
     evaluate()

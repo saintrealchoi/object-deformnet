@@ -44,7 +44,7 @@ opt.deform_wt = 0.01
 
 if opt.wandb =='online':
     wandb.init(project='object-deform') 
-    wandb.run.name = 'origin'
+    wandb.run.name = 'prior_ae'
     
 def get_auto_encoder(model_path):
     emb_dim = 512
@@ -138,7 +138,8 @@ def train_net():
                 sRT = sRT.cuda()
                 nocs = nocs.cuda()
                 
-                prior = ae(prior,None)
+                prior = ae(points,None)[1]
+                
                 assign_mat, deltas = estimator(points, rgb, choose, cat_id, prior)
                 
                 loss, corr_loss, cd_loss, entropy_loss, deform_loss = criterion(assign_mat, deltas, prior, nocs, model)
@@ -188,6 +189,9 @@ def train_net():
                 prior = prior.cuda()
                 sRT = sRT.cuda()
                 nocs = nocs.cuda()
+                
+                prior = ae(points,None)[1]
+                
                 assign_mat, deltas = estimator(points, rgb, choose, cat_id, prior)
                 loss, _, _, _, _ = criterion(assign_mat, deltas, prior, nocs, model)
                 # estimate pose and scale
