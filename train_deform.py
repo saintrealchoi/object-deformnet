@@ -10,6 +10,7 @@ from lib.loss import Loss
 from data.pose_dataset import PoseDataset
 from lib.utils import setup_logger, compute_sRT_errors
 from lib.align import estimateSimilarityTransform
+from lib.auto_encoder import PointCloudAE
 
 from tqdm import tqdm
 import wandb
@@ -31,7 +32,7 @@ parser.add_argument('--start_epoch', type=int, default=1, help='which epoch to s
 parser.add_argument('--max_epoch', type=int, default=25, help='max number of epochs to train')
 parser.add_argument('--resume_model', type=str, default='', help='resume from saved model')
 parser.add_argument('--result_dir', type=str, default='results/camera_real', help='directory to save train results')
-parser.add_argument('--wandb', type=str, default='online', help='wandb online mode')
+parser.add_argument('--wandb', type=str, default='offline', help='wandb online mode')
 opt = parser.parse_args()
 
 opt.decay_epoch = [0, 5, 10, 15, 20]
@@ -44,6 +45,15 @@ opt.deform_wt = 0.01
 if opt.wandb =='online':
     wandb.init(project='object-deform') 
     wandb.run.name = 'origin'
+    
+def get_auto_encoder(model_path):
+    emb_dim = 512
+    n_pts = 1024
+    ae = PointCloudAE(emb_dim, n_pts)
+    ae.cuda()
+    ae.load_state_dict(torch.load(model_path))
+    ae.eval()
+    return ae
 
 def train_net():
     # set result directory
@@ -110,6 +120,10 @@ def train_net():
         train_dataloader = torch.utils.data.DataLoader(train_dataset, batch_size=opt.batch_size, sampler=train_sampler,
                                                        num_workers=opt.num_workers, pin_memory=True)
         estimator.train()
+        
+        auto_encoder_path = os.path.join('/home/choisj/git/sj/object-deformnet/results/ae_points/model_50.pth')
+        ae = get_auto_encoder(auto_encoder_path)
+        
         # for i, data in tqdm(enumerate(train_dataloader, 1)):
         with tqdm(train_dataloader, unit='batch') as tepoch:
             for i,data in enumerate(tepoch):
@@ -123,7 +137,10 @@ def train_net():
                 prior = prior.cuda()
                 sRT = sRT.cuda()
                 nocs = nocs.cuda()
+                
+                prior = ae(prior,None)
                 assign_mat, deltas = estimator(points, rgb, choose, cat_id, prior)
+                
                 loss, corr_loss, cd_loss, entropy_loss, deform_loss = criterion(assign_mat, deltas, prior, nocs, model)
                 optimizer.zero_grad()
                 if opt.wandb == 'online':
