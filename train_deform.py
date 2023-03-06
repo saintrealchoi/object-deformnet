@@ -14,8 +14,7 @@ from lib.align import estimateSimilarityTransform
 from tqdm import tqdm
 import wandb
 
-wandb.init(project='object-deform')
-wandb.run.name = 'origin'
+
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--dataset', type=str, default='CAMERA+Real', help='CAMERA or CAMERA+Real')
@@ -32,6 +31,7 @@ parser.add_argument('--start_epoch', type=int, default=1, help='which epoch to s
 parser.add_argument('--max_epoch', type=int, default=25, help='max number of epochs to train')
 parser.add_argument('--resume_model', type=str, default='', help='resume from saved model')
 parser.add_argument('--result_dir', type=str, default='results/camera_real', help='directory to save train results')
+parser.add_argument('--wandb', type=str, default='online', help='wandb online mode')
 opt = parser.parse_args()
 
 opt.decay_epoch = [0, 5, 10, 15, 20]
@@ -41,6 +41,9 @@ opt.cd_wt = 5.0
 opt.entropy_wt = 0.0001
 opt.deform_wt = 0.01
 
+if opt.wandb =='online':
+    wandb.init(project='object-deform') 
+    wandb.run.name = 'origin'
 
 def train_net():
     # set result directory
@@ -123,14 +126,15 @@ def train_net():
                 assign_mat, deltas = estimator(points, rgb, choose, cat_id, prior)
                 loss, corr_loss, cd_loss, entropy_loss, deform_loss = criterion(assign_mat, deltas, prior, nocs, model)
                 optimizer.zero_grad()
-                wandb.log({
-                    'learning_rate' : current_lr,
-                    'train_loss' : loss,
-                    'corr_loss' : corr_loss,
-                    'cd_loss' : cd_loss,
-                    'entropy_loss' : entropy_loss,
-                    'deform_loss' : deform_loss
-                })
+                if opt.wandb == 'online':
+                    wandb.log({
+                        'learning_rate' : current_lr,
+                        'train_loss' : loss,
+                        'corr_loss' : corr_loss,
+                        'cd_loss' : cd_loss,
+                        'entropy_loss' : entropy_loss,
+                        'deform_loss' : deform_loss
+                    })
                 loss.backward()
                 optimizer.step()
                 global_step += 1
@@ -218,14 +222,15 @@ def train_net():
         easy_easy_acc = np.mean(easy_easy_acc)
         iou_acc = np.mean(iou_acc)
         val_loss = val_loss / val_size
-        wandb.log({
-                'val_loss' : current_lr,
-                '5^o5cm_acc' : strict_acc,
-                '5^o10cm_acc' : strict_easy_acc,
-                '10^o5cm_acc' : easy_acc,
-                '10^o10cm_acc' : easy_easy_acc,
-                'iou_acc' : iou_acc,
-            })
+        if opt.wandb == 'online':
+            wandb.log({
+                    'val_loss' : current_lr,
+                    '5^o5cm_acc' : strict_acc,
+                    '5^o10cm_acc' : strict_easy_acc,
+                    '10^o5cm_acc' : easy_acc,
+                    '10^o10cm_acc' : easy_easy_acc,
+                    'iou_acc' : iou_acc,
+                })
         logger.info('Epoch {0:02d} test average loss: {1:06f}'.format(epoch, val_loss))
         logger.info('Overall accuracies:')
         logger.info('5^o 5cm: {:4f} 5^o 10cm: {:4f} 10^o 5cm: {:4f} 10^o 10cm: {:4f} IoU: {:4f}'.format(strict_acc, strict_easy_acc, easy_acc, easy_easy_acc, iou_acc))
