@@ -12,8 +12,17 @@ import torchvision.transforms as transforms
 from lib.network import DeformNet
 from lib.align import estimateSimilarityTransform
 from lib.utils import load_depth, get_bbox, compute_mAP, plot_mAP
+from lib.auto_encoder import PointCloudAE
 
-import open3d as o3d
+def get_auto_encoder(model_path):
+    emb_dim = 512
+    n_pts = 1024
+    ae = PointCloudAE(emb_dim, n_pts)
+    ae.cuda()
+    ae.load_state_dict(torch.load(model_path))
+    ae.eval()
+    return ae
+
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--data', type=str, default='real_test', help='val, real_test')
@@ -29,8 +38,6 @@ opt = parser.parse_args()
 mean_shapes = np.load('assets/mean_points_emb.npy')
 
 assert opt.data in ['val', 'real_test']
-
-
 if opt.data == 'val':
     result_dir = 'results/eval_camera'
     file_path = 'CAMERA/val_list.txt'
@@ -54,7 +61,6 @@ norm_color = transforms.Compose(
 
 def detect():
     # resume model
-    viz_pcd = False
     os.environ['CUDA_VISIBLE_DEVICES'] = opt.gpu
     estimator = DeformNet(opt.n_cat, opt.nv_prior)
     estimator.cuda()
@@ -69,6 +75,8 @@ def detect():
     inst_count = 0
     img_count = 0
     t_start = time.time()
+    auto_encoder_path = os.path.join('/home/choisj/git/sj/object-deformnet/results/ae_points/model_50.pth')
+    ae = get_auto_encoder(auto_encoder_path)
     for path in tqdm(img_list):
         img_path = os.path.join(opt.data_dir, path)
         raw_rgb = cv2.imread(img_path + '_color.png')[:, :, :3]
@@ -118,6 +126,17 @@ def detect():
             pt0 = (xmap_masked - cam_cx) * pt2 / cam_fx
             pt1 = (ymap_masked - cam_cy) * pt2 / cam_fy
             points = np.concatenate((pt0, pt1, pt2), axis=1)
+            
+            ##
+            f_points.append(points)
+            
+            points = torch.from_numpy(points).unsqueeze(0)
+            points = points.float().cuda()
+            
+            prior = ae(points,None)[1]
+            prior = prior.detach().cpu().numpy()
+            prior = prior[0]
+            
             rgb = raw_rgb[rmin:rmax, cmin:cmax, :]
             rgb = cv2.resize(rgb, (opt.img_size, opt.img_size), interpolation=cv2.INTER_LINEAR)
             rgb = norm_color(rgb)
@@ -127,7 +146,7 @@ def detect():
             row_idx = choose // crop_w
             choose = (np.floor(row_idx * ratio) * opt.img_size + np.floor(col_idx * ratio)).astype(np.int64)
             # concatenate instances
-            f_points.append(points)
+            # f_points.append(points)
             f_rgb.append(rgb)
             f_choose.append(choose)
             f_catId.append(cat_id)
@@ -141,34 +160,11 @@ def detect():
             # inference
             torch.cuda.synchronize()
             t_now = time.time()
-            SEE = 0
-            pcd = o3d.geometry.PointCloud()
-            
-            # GT point & prior
-            if viz_pcd == True:
-                pcd.points = o3d.utility.Vector3dVector(f_points[SEE].detach().cpu().numpy())
-                o3d.visualization.draw_geometries([pcd])
-            
-                pcd.points = o3d.utility.Vector3dVector(f_prior[SEE].detach().cpu().numpy())
-                o3d.visualization.draw_geometries([pcd])
-            
             assign_mat, deltas = estimator(f_points, f_rgb, f_choose, f_catId, f_prior)
             # assign_mat, deltas = estimator(f_rgb, f_choose, f_catId, f_prior)
             inst_shape = f_prior + deltas
-            
-            # f_prior + delta
-            if viz_pcd == True:
-                pcd.points = o3d.utility.Vector3dVector(inst_shape[SEE].detach().cpu().numpy())
-                o3d.visualization.draw_geometries([pcd])
-            
             assign_mat = F.softmax(assign_mat, dim=2)
             f_coords = torch.bmm(assign_mat, inst_shape)  # bs x n_pts x 3
-            
-            # visualize assign matrix
-            if viz_pcd == True:
-                pcd.points = o3d.utility.Vector3dVector(f_coords[SEE].detach().cpu().numpy())
-                o3d.visualization.draw_geometries([pcd])
-            
             torch.cuda.synchronize()
             t_inference += (time.time() - t_now)
             f_coords = f_coords.detach().cpu().numpy()
@@ -181,9 +177,6 @@ def detect():
                 choose = f_choose[i]
                 _, choose = np.unique(choose, return_index=True)
                 nocs_coords = f_coords[i, choose, :]
-                if i == SEE:
-                    pcd.points = o3d.utility.Vector3dVector(nocs_coords)
-                    o3d.visualization.draw_geometries([pcd])
                 f_size[inst_idx] = 2 * np.amax(np.abs(f_insts[i]), axis=0)
                 points = f_points[i, choose, :]
                 _, _, _, pred_sRT = estimateSimilarityTransform(nocs_coords, points)
@@ -283,62 +276,6 @@ def evaluate():
     messages.append('5 degree, 10cm: {:.1f}'.format(pose_acc[-1, degree_05_idx, shift_10_idx] * 100))
     messages.append('10 degree, 5cm: {:.1f}'.format(pose_acc[-1, degree_10_idx, shift_05_idx] * 100))
     messages.append('10 degree, 10cm: {:.1f}'.format(pose_acc[-1, degree_10_idx, shift_10_idx] * 100))
-    
-    messages.append('1')
-    messages.append('3D IoU at 25: {:.1f}'.format(iou_aps[1, iou_25_idx] * 100))
-    messages.append('3D IoU at 50: {:.1f}'.format(iou_aps[1, iou_50_idx] * 100))
-    messages.append('3D IoU at 75: {:.1f}'.format(iou_aps[1, iou_75_idx] * 100))
-    messages.append('5 degree, 5cm: {:.1f}'.format(pose_aps[1, degree_05_idx, shift_05_idx] * 100))
-    messages.append('5 degree, 10cm: {:.1f}'.format(pose_aps[1, degree_05_idx, shift_10_idx] * 100))
-    messages.append('10 degree, 5cm: {:.1f}'.format(pose_aps[1, degree_10_idx, shift_05_idx] * 100))
-    messages.append('10 degree, 10cm: {:.1f}'.format(pose_aps[1, degree_10_idx, shift_10_idx] * 100))
-
-    messages.append('2')
-    messages.append('3D IoU at 25: {:.1f}'.format(iou_aps[2, iou_25_idx] * 100))
-    messages.append('3D IoU at 50: {:.1f}'.format(iou_aps[2, iou_50_idx] * 100))
-    messages.append('3D IoU at 75: {:.1f}'.format(iou_aps[2, iou_75_idx] * 100))
-    messages.append('5 degree, 5cm: {:.1f}'.format(pose_aps[2, degree_05_idx, shift_05_idx] * 100))
-    messages.append('5 degree, 10cm: {:.1f}'.format(pose_aps[2, degree_05_idx, shift_10_idx] * 100))
-    messages.append('10 degree, 5cm: {:.1f}'.format(pose_aps[2, degree_10_idx, shift_05_idx] * 100))
-    messages.append('10 degree, 10cm: {:.1f}'.format(pose_aps[2, degree_10_idx, shift_10_idx] * 100))
-
-
-    messages.append('3')
-    messages.append('3D IoU at 25: {:.1f}'.format(iou_aps[3, iou_25_idx] * 100))
-    messages.append('3D IoU at 50: {:.1f}'.format(iou_aps[3, iou_50_idx] * 100))
-    messages.append('3D IoU at 75: {:.1f}'.format(iou_aps[3, iou_75_idx] * 100))
-    messages.append('5 degree, 5cm: {:.1f}'.format(pose_aps[3, degree_05_idx, shift_05_idx] * 100))
-    messages.append('5 degree, 10cm: {:.1f}'.format(pose_aps[3, degree_05_idx, shift_10_idx] * 100))
-    messages.append('10 degree, 5cm: {:.1f}'.format(pose_aps[3, degree_10_idx, shift_05_idx] * 100))
-    messages.append('10 degree, 10cm: {:.1f}'.format(pose_aps[3, degree_10_idx, shift_10_idx] * 100))
-
-    messages.append('4')
-    messages.append('3D IoU at 25: {:.1f}'.format(iou_aps[4, iou_25_idx] * 100))
-    messages.append('3D IoU at 50: {:.1f}'.format(iou_aps[4, iou_50_idx] * 100))
-    messages.append('3D IoU at 75: {:.1f}'.format(iou_aps[4, iou_75_idx] * 100))
-    messages.append('5 degree, 5cm: {:.1f}'.format(pose_aps[4, degree_05_idx, shift_05_idx] * 100))
-    messages.append('5 degree, 10cm: {:.1f}'.format(pose_aps[4, degree_05_idx, shift_10_idx] * 100))
-    messages.append('10 degree, 5cm: {:.1f}'.format(pose_aps[4, degree_10_idx, shift_05_idx] * 100))
-    messages.append('10 degree, 10cm: {:.1f}'.format(pose_aps[4, degree_10_idx, shift_10_idx] * 100))
-
-    messages.append('5')
-    messages.append('3D IoU at 25: {:.1f}'.format(iou_aps[5, iou_25_idx] * 100))
-    messages.append('3D IoU at 50: {:.1f}'.format(iou_aps[5, iou_50_idx] * 100))
-    messages.append('3D IoU at 75: {:.1f}'.format(iou_aps[5, iou_75_idx] * 100))
-    messages.append('5 degree, 5cm: {:.1f}'.format(pose_aps[5, degree_05_idx, shift_05_idx] * 100))
-    messages.append('5 degree, 10cm: {:.1f}'.format(pose_aps[5, degree_05_idx, shift_10_idx] * 100))
-    messages.append('10 degree, 5cm: {:.1f}'.format(pose_aps[5, degree_10_idx, shift_05_idx] * 100))
-    messages.append('10 degree, 10cm: {:.1f}'.format(pose_aps[5, degree_10_idx, shift_10_idx] * 100))
-    
-    messages.append('6')
-    messages.append('3D IoU at 25: {:.1f}'.format(iou_aps[6, iou_25_idx] * 100))
-    messages.append('3D IoU at 50: {:.1f}'.format(iou_aps[6, iou_50_idx] * 100))
-    messages.append('3D IoU at 75: {:.1f}'.format(iou_aps[6, iou_75_idx] * 100))
-    messages.append('5 degree, 5cm: {:.1f}'.format(pose_aps[6, degree_05_idx, shift_05_idx] * 100))
-    messages.append('5 degree, 10cm: {:.1f}'.format(pose_aps[6, degree_05_idx, shift_10_idx] * 100))
-    messages.append('10 degree, 5cm: {:.1f}'.format(pose_aps[6, degree_10_idx, shift_05_idx] * 100))
-    messages.append('10 degree, 10cm: {:.1f}'.format(pose_aps[6, degree_10_idx, shift_10_idx] * 100))
-    
     for msg in messages:
         print(msg)
         fw.write(msg + '\n')

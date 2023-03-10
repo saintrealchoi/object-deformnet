@@ -11,18 +11,17 @@ from data.pose_dataset import PoseDataset
 from lib.utils import setup_logger, compute_sRT_errors
 from lib.align import estimateSimilarityTransform
 from lib.auto_encoder import PointCloudAE
-
 from tqdm import tqdm
 import wandb
 
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--dataset', type=str, default='CAMERA+Real', help='CAMERA or CAMERA+Real')
+parser.add_argument('--dataset', type=str, default='Real', help='CAMERA or CAMERA+Real')
 parser.add_argument('--data_dir', type=str, default='data', help='data directory')
-parser.add_argument('--n_pts', type=int, default=1024, help='number of foreground points')
+parser.add_argument('--n_pts', type=int, default=2048, help='number of foreground points')
 parser.add_argument('--n_cat', type=int, default=6, help='number of object categories')
-parser.add_argument('--nv_prior', type=int, default=1024, help='number of vertices in shape priors')
+parser.add_argument('--nv_prior', type=int, default=2048, help='number of vertices in shape priors')
 parser.add_argument('--img_size', type=int, default=192, help='cropped image size')
 parser.add_argument('--batch_size', type=int, default=64, help='batch size')
 parser.add_argument('--num_workers', type=int, default=10, help='number of data loading workers')
@@ -31,11 +30,13 @@ parser.add_argument('--lr', type=float, default=0.0001, help='initial learning r
 parser.add_argument('--start_epoch', type=int, default=1, help='which epoch to start')
 parser.add_argument('--max_epoch', type=int, default=25, help='max number of epochs to train')
 parser.add_argument('--resume_model', type=str, default='', help='resume from saved model')
-parser.add_argument('--result_dir', type=str, default='results/camera_real', help='directory to save train results')
-parser.add_argument('--wandb', type=str, default='offline', help='wandb online mode')
+parser.add_argument('--result_dir', type=str, default='results/finetune', help='directory to save train results')
+parser.add_argument('--wandb', type=str, default='online', help='wandb online mode')
 opt = parser.parse_args()
 
+# opt.decay_epoch = [0, 3, 5]
 opt.decay_epoch = [0, 5, 10, 15, 20]
+# opt.decay_rate = [1.0, 0.6, 0.01]
 opt.decay_rate = [1.0, 0.6, 0.3, 0.1, 0.01]
 opt.corr_wt = 1.0
 opt.cd_wt = 5.0
@@ -44,7 +45,7 @@ opt.deform_wt = 0.01
 
 if opt.wandb =='online':
     wandb.init(project='object-deform') 
-    wandb.run.name = 'prior_ae'
+    wandb.run.name = 'point completion'
     
 def get_auto_encoder(model_path):
     emb_dim = 512
@@ -71,7 +72,8 @@ def train_net():
         estimator.load_state_dict(torch.load(opt.resume_model))
     # dataset
     train_dataset = PoseDataset(opt.dataset, 'train', opt.data_dir, opt.n_pts, opt.img_size)
-    val_dataset = PoseDataset(opt.dataset, 'test', opt.data_dir, opt.n_pts, opt.img_size)
+    val_dataset = PoseDataset('CAMERA+Real', 'test', opt.data_dir, opt.n_pts, opt.img_size)
+    # val_dataset = PoseDataset(opt.dataset, 'test', opt.data_dir, opt.n_pts, opt.img_size)
     # start training
     st_time = time.time()
     train_steps = 1500
@@ -128,7 +130,7 @@ def train_net():
         with tqdm(train_dataloader, unit='batch') as tepoch:
             for i,data in enumerate(tepoch):
                 tepoch.set_description(f"Epoch {epoch}")
-                points, rgb, choose, cat_id, model, prior, sRT, nocs = data
+                points, rgb, choose, cat_id, model, prior, sRT, nocs= data
                 points = points.cuda()
                 rgb = rgb.cuda()
                 choose = choose.cuda()
@@ -138,7 +140,7 @@ def train_net():
                 sRT = sRT.cuda()
                 nocs = nocs.cuda()
                 
-                prior = ae(points,None)[1]
+                # prior = ae(points,None)[1]
                 
                 assign_mat, deltas = estimator(points, rgb, choose, cat_id, prior)
                 
@@ -172,7 +174,7 @@ def train_net():
         easy_easy_success = np.zeros((opt.n_cat,), dtype=int)        # 10 degree and 10 cm
         iou_success = np.zeros((opt.n_cat,), dtype=int)              # relative scale error < 0.1
         # sample validation subset
-        val_size = 1500
+        val_size = 500
         val_idx = random.sample(list(range(val_dataset.length)), val_size)
         val_sampler = torch.utils.data.sampler.SubsetRandomSampler(val_idx)
         val_dataloader = torch.utils.data.DataLoader(val_dataset, batch_size=1, sampler=val_sampler,
@@ -190,7 +192,7 @@ def train_net():
                 sRT = sRT.cuda()
                 nocs = nocs.cuda()
                 
-                prior = ae(points,None)[1]
+                # prior = ae(points,None)[1]
                 
                 assign_mat, deltas = estimator(points, rgb, choose, cat_id, prior)
                 loss, _, _, _, _ = criterion(assign_mat, deltas, prior, nocs, model)

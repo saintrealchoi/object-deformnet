@@ -5,7 +5,7 @@ import cv2
 import numpy as np
 import _pickle as cPickle
 from tqdm import tqdm
-sys.path.append('../lib')
+sys.path.append('/home/choisj/git/sj/object-deformnet/lib')
 from align import align_nocs_to_depth
 from utils import load_depth
 
@@ -174,6 +174,8 @@ def annotate_camera_train(data_dir):
     with open(os.path.join(data_dir, 'CAMERA/train_list.txt'), 'w') as f:
         for img_path in valid_img_list:
             f.write("%s\n" % img_path)
+
+
 
 
 def annotate_real_train(data_dir):
@@ -374,7 +376,7 @@ def annotate_test_data(data_dir):
 
 
 if __name__ == '__main__':
-    data_dir = '/home/tianmeng/Documents/pose_ws/object-deformnet/data'
+    data_dir = './data'
     # create list for all data
     create_img_list(data_dir)
     # annotate dataset and re-write valid data to list

@@ -31,7 +31,9 @@ from utils import camera
 from lib.utils import draw_detections,align_rotation, transform_coordinates_3d,calculate_2d_projections,get_3d_bbox
 from utils.viz_utils import save_projected_points,line_set_mesh,draw_bboxes,draw_axes,draw_bboxes_origin
 from utils.transform_utils import get_gt_pointclouds,project
+from lib.utils import compute_RT_overlaps,compute_sRT_errors,compute_RT_errors
 
+category = {1:'bottle',2:'bowl',3:'camera',4:'can',5:'laptop',6:'mug'}
 parser = argparse.ArgumentParser()
 parser.add_argument('--dataset', type=str, default='CAMERA+Real', help='CAMERA or CAMERA+Real')
 parser.add_argument('--data_dir', type=str, default='data', help='data directory')
@@ -52,6 +54,8 @@ parser.add_argument('--result_dir', type=str, default='results/camera_real', hel
 
 mean_shapes = np.load('assets/mean_points_emb.npy')
 opt = parser.parse_args()
+synset_names = ['BG', 'bottle', 'bowl', 'camera', 'can', 'laptop', 'mug']
+
 assert opt.data in ['val', 'real_test']
 if opt.data == 'val':
     result_dir = 'results/eval_camera'
@@ -129,7 +133,11 @@ def inference(
         
         num_insts = len(mrcnn_result['class_ids'])
             
+        R_errors = []
+        T_errors = []
+        
         for j in range(num_insts):
+            
             shape_out = result['pred_shape'][j]
             
             rotated_pc, rotated_box, pred_size = get_gt_pointclouds(result['pred_RTs'][j],shape_out,camera_model=_CAMERA)
@@ -167,6 +175,21 @@ def inference(
             
             axes.append(projected_axes)
             #RT output
+            
+            max_T = 10000
+            candidate_idx = -1
+            for idx,candidate in enumerate(result['gt_RTs']):
+                temp = compute_RT_errors(candidate, sRT, result['pred_class_ids'][j], 1, synset_names)
+                if temp[1] < max_T :
+                    max_T = temp[1]
+                    candidate_idx = idx
+                    
+
+            results = compute_RT_errors(result['gt_RTs'][candidate_idx], sRT, result['pred_class_ids'][j], 1, synset_names)
+            
+            R_errors.append(float(results[0]))
+            T_errors.append(float(results[1]))
+            
         for k in range(result['gt_RTs'].shape[0]):
             gt_axes = transform_coordinates_3d(xyz_axis,result['gt_RTs'][k])
             gt_projected_axes = calculate_2d_projections(gt_axes,_CAMERA.K_matrix[:3,:3])
@@ -179,7 +202,25 @@ def inference(
             colors_box = [(0,0,220)]
             im = np.array(np.copy(img_vis)).copy()
             
+            font=cv2.FONT_HERSHEY_SIMPLEX
+            font_scale = 0.5
+            font_thickness = 2
+            
+            count = 0
+            for cat in range(1,7):
+                if cat not in result['pred_class_ids']:
+                    continue
+                for x in range(num_insts):
+                    if cat == result['pred_class_ids'][x]:
+                        text = '{0} : R_{1:.3f}, T_{2:.3f}'.format(category[result['pred_class_ids'][x]],R_errors[x],T_errors[x])
+                        text_size, _ = cv2.getTextSize(text, font, font_scale, font_thickness)
+                        text_x = im.shape[1] - text_size[0] - 10 # adjust 10 to your preference
+                        text_y = im.shape[0] - 10 # adjust 10 to your preference
+                        cv2.putText(im,text,(text_x,text_y-15*count),font,font_scale,(255,255,255),font_thickness)
+                        count+=1
+                        
             # Draw Pred BBoxes, Axes
+            
             for k in range(len(colors_box)):
                 for points_2d, axis in zip(box_obb, axes):
                     points_2d = np.array(points_2d)
