@@ -23,21 +23,23 @@ parser.add_argument('--n_pts', type=int, default=2048, help='number of foregroun
 parser.add_argument('--n_cat', type=int, default=6, help='number of object categories')
 parser.add_argument('--nv_prior', type=int, default=2048, help='number of vertices in shape priors')
 parser.add_argument('--img_size', type=int, default=192, help='cropped image size')
-parser.add_argument('--batch_size', type=int, default=64, help='batch size')
+parser.add_argument('--batch_size', type=int, default=32, help='batch size')
 parser.add_argument('--num_workers', type=int, default=10, help='number of data loading workers')
 parser.add_argument('--gpu', type=str, default='0', help='GPU to use')
 parser.add_argument('--lr', type=float, default=0.0001, help='initial learning rate')
 parser.add_argument('--start_epoch', type=int, default=1, help='which epoch to start')
-parser.add_argument('--max_epoch', type=int, default=25, help='max number of epochs to train')
-parser.add_argument('--resume_model', type=str, default='', help='resume from saved model')
-parser.add_argument('--result_dir', type=str, default='results/finetune', help='directory to save train results')
+parser.add_argument('--max_epoch', type=int, default=12, help='max number of epochs to train')
+parser.add_argument('--resume_model', type=str, default='results/camera_2048/model_50.pth', help='resume from saved model')
+parser.add_argument('--result_dir', type=str, default='results/camera_2048', help='directory to save train results')
 parser.add_argument('--wandb', type=str, default='online', help='wandb online mode')
 opt = parser.parse_args()
 
 # opt.decay_epoch = [0, 3, 5]
-opt.decay_epoch = [0, 5, 10, 15, 20]
-# opt.decay_rate = [1.0, 0.6, 0.01]
-opt.decay_rate = [1.0, 0.6, 0.3, 0.1, 0.01]
+opt.decay_epoch = [0, 6, 10]
+# opt.decay_epoch = [0, 5, 10, 15, 20]
+# opt.decay_epoch = [0, 10, 20, 30, 40]
+opt.decay_rate = [1.0, 0.6, 0.01]
+# opt.decay_rate = [1.0, 0.6, 0.3, 0.1, 0.01]
 opt.corr_wt = 1.0
 opt.cd_wt = 5.0
 opt.entropy_wt = 0.0001
@@ -45,11 +47,11 @@ opt.deform_wt = 0.01
 
 if opt.wandb =='online':
     wandb.init(project='object-deform') 
-    wandb.run.name = 'point completion'
+    wandb.run.name = '2048point-finetune'
     
 def get_auto_encoder(model_path):
     emb_dim = 512
-    n_pts = 1024
+    n_pts = 2048
     ae = PointCloudAE(emb_dim, n_pts)
     ae.cuda()
     ae.load_state_dict(torch.load(model_path))
@@ -123,8 +125,8 @@ def train_net():
                                                        num_workers=opt.num_workers, pin_memory=True)
         estimator.train()
         
-        auto_encoder_path = os.path.join('/home/choisj/git/sj/object-deformnet/results/ae_points/model_50.pth')
-        ae = get_auto_encoder(auto_encoder_path)
+        # auto_encoder_path = os.path.join('/home/choisj/git/sj/object-deformnet/results/ae_points/model_50.pth')
+        # ae = get_auto_encoder(auto_encoder_path)
         
         # for i, data in tqdm(enumerate(train_dataloader, 1)):
         with tqdm(train_dataloader, unit='batch') as tepoch:

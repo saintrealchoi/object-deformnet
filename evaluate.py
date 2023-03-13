@@ -19,9 +19,9 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--data', type=str, default='real_test', help='val, real_test')
 parser.add_argument('--data_dir', type=str, default='data', help='data directory')
 parser.add_argument('--n_cat', type=int, default=6, help='number of object categories')
-parser.add_argument('--nv_prior', type=int, default=1024, help='number of vertices in shape priors')
+parser.add_argument('--nv_prior', type=int, default=2048, help='number of vertices in shape priors')
 parser.add_argument('--model', type=str, default='', help='resume from saved model')
-parser.add_argument('--n_pts', type=int, default=1024, help='number of foreground points')
+parser.add_argument('--n_pts', type=int, default=2048, help='number of foreground points')
 parser.add_argument('--img_size', type=int, default=192, help='cropped image size')
 parser.add_argument('--gpu', type=str, default='1', help='GPU to use')
 opt = parser.parse_args()
@@ -54,7 +54,7 @@ norm_color = transforms.Compose(
 
 def detect():
     # resume model
-    viz_pcd = False
+    viz_pcd = True
     os.environ['CUDA_VISIBLE_DEVICES'] = opt.gpu
     estimator = DeformNet(opt.n_cat, opt.nv_prior)
     estimator.cuda()
@@ -82,7 +82,7 @@ def detect():
             mrcnn_result = cPickle.load(f)
         num_insts = len(mrcnn_result['class_ids'])
         f_sRT = np.zeros((num_insts, 4, 4), dtype=float)
-        f_shape = np.zeros((num_insts, 1024, 3), dtype=float)
+        f_shape = np.zeros((num_insts, 2048, 3), dtype=float)
         f_size = np.zeros((num_insts, 3), dtype=float)
         # prepare frame data
         f_points, f_rgb, f_choose, f_catId, f_prior = [], [], [], [], []
@@ -141,7 +141,7 @@ def detect():
             # inference
             torch.cuda.synchronize()
             t_now = time.time()
-            SEE = 0
+            SEE = 2
             pcd = o3d.geometry.PointCloud()
             
             # GT point & prior
@@ -181,9 +181,10 @@ def detect():
                 choose = f_choose[i]
                 _, choose = np.unique(choose, return_index=True)
                 nocs_coords = f_coords[i, choose, :]
-                if i == SEE:
-                    pcd.points = o3d.utility.Vector3dVector(nocs_coords)
-                    o3d.visualization.draw_geometries([pcd])
+                if viz_pcd == True:
+                    if i == SEE:
+                        pcd.points = o3d.utility.Vector3dVector(nocs_coords)
+                        o3d.visualization.draw_geometries([pcd])
                 f_size[inst_idx] = 2 * np.amax(np.abs(f_insts[i]), axis=0)
                 points = f_points[i, choose, :]
                 _, _, _, pred_sRT = estimateSimilarityTransform(nocs_coords, points)

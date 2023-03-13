@@ -49,7 +49,7 @@ parser.add_argument('--lr', type=float, default=0.0001, help='initial learning r
 parser.add_argument('--start_epoch', type=int, default=1, help='which epoch to start')
 parser.add_argument('--max_epoch', type=int, default=25, help='max number of epochs to train')
 parser.add_argument('--resume_model', type=str, default='', help='resume from saved model')
-parser.add_argument('--checkpoint', type=str, default='/home/choisj/git/sj/object-deformnet/results/real/model_50.pth', help='evaluate model')
+parser.add_argument('--model', type=str, default='/home/choisj/git/sj/object-deformnet/results/real/model_50.pth', help='evaluate model')
 parser.add_argument('--result_dir', type=str, default='results/camera_real', help='directory to save train results')
 
 mean_shapes = np.load('assets/mean_points_emb.npy')
@@ -253,6 +253,6 @@ if __name__ == '__main__':
   print(opt)
   result_name = 'inference'
   path = 'data/'+result_name
-  output_path = pathlib.Path(path) / opt.checkpoint[-7:-5]
+  output_path = pathlib.Path(path) / opt.model[-7:-5]
   output_path.mkdir(parents=True, exist_ok=True)
   inference(opt, opt.data_dir, output_path)
