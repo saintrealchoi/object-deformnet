@@ -9,4 +9,7 @@ lib/nn_distance/__pycache__
 lib/nn_distance/build
 lib/nn_distance/nn_distance.egg-info
 __pycache__
-*.mp4
+mug_assign.mp4
+mug_delta.mp4
+mug_mean.mp4
+save.mp4
