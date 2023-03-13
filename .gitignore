@@ -1,4 +1,6 @@
 data
+!data/pose_dataset.py
+!data/shape_dataset.py
 .vscode
 results
 wandb
@@ -7,3 +9,4 @@ lib/nn_distance/__pycache__
 lib/nn_distance/build
 lib/nn_distance/nn_distance.egg-info
 __pycache__
+*.mp4
