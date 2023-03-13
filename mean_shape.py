@@ -34,14 +34,16 @@ def visualize_shape(name, shape_list, result_dir):
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--h5_file', type=str, default='data/obj_models/ShapeNetCore_2048.h5', help='h5py file')
+# parser.add_argument('--model', type=str, default='results/ae_points/model_50.pth',  help='resume model')
+# parser.add_argument('--result_dir', type=str, default='results/ae_points', help='directory to save mean shapes')
 parser.add_argument('--model', type=str, default='results/ae_points/model_50.pth',  help='resume model')
-parser.add_argument('--result_dir', type=str, default='results/ae_points', help='directory to save mean shapes')
+parser.add_argument('--result_dir', type=str, default='ae_test2', help='directory to save mean shapes')
 parser.add_argument('--gpu', type=str, default='0', help='GPU to use')
 opt = parser.parse_args()
 
 opt.emb_dim = 512
 opt.n_cat = 6
-opt.n_pts = 1024
+opt.n_pts = 2048
 
 os.environ['CUDA_VISIBLE_DEVICES'] = opt.gpu
 
@@ -106,7 +108,7 @@ for i in range(opt.n_cat):
     # save point cloud and visualize
     pcd = o3d.geometry.PointCloud()
     pcd.points = o3d.utility.Vector3dVector(mean_shape)
-    visualize_shape(catId_to_name[i], [pcd], opt.result_dir)
+    # visualize_shape(catId_to_name[i], [pcd], opt.result_dir)
 # save results
 np.save(os.path.join(opt.result_dir, 'mean_embedding'), mean_emb)
 np.save(os.path.join(opt.result_dir, 'mean_points_emb'), mean_points)

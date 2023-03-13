@@ -84,7 +84,7 @@ def process_data(img_path, depth):
             else:
                 model_id = line_info[3]    # CAMERA objs
             # remove one mug instance in CAMERA train due to improper model
-            if model_id == 'b9be7cfe653740eb7633a2dd89cec754':
+            if model_id == 'b9be7cfe653740eb7633a2dd89cec754' or model_id == 'd3b53f56b4a7b3b3c9f016d57db96408':
                 continue
             # process foreground objects
             inst_mask = np.equal(mask, inst_id)
@@ -374,7 +374,7 @@ def annotate_test_data(data_dir):
 
 
 if __name__ == '__main__':
-    data_dir = '/home/tianmeng/Documents/pose_ws/object-deformnet/data'
+    data_dir = '../data'
     # create list for all data
     create_img_list(data_dir)
     # annotate dataset and re-write valid data to list

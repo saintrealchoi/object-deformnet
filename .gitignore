@@ -2,3 +2,12 @@ data
 .vscode
 results
 wandb
+lib/__pycache__
+lib/nn_distance/__pycache__
+lib/nn_distance/build
+lib/nn_distance/nn_distance.egg-info
+__pycache__
+*.mp4
+ae_test/
+ae_test2
+nohup.out

@@ -10,10 +10,10 @@ from lib.utils import setup_logger
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--num_point', type=int, default=1024, help='number of points, needed if use points')
+parser.add_argument('--num_point', type=int, default=2048, help='number of points, needed if use points')
 parser.add_argument('--emb_dim', type=int, default=512, help='dimension of latent embedding [default: 512]')
 parser.add_argument('--h5_file', type=str, default='data/obj_models/ShapeNetCore_4096.h5', help='h5 file')
-parser.add_argument('--batch_size', type=int, default=32, help='batch size')
+parser.add_argument('--batch_size', type=int, default=128, help='batch size')
 parser.add_argument('--num_workers', type=int, default=10, help='number of data loading workers')
 parser.add_argument('--gpu', type=str, default='0', help='GPU to use')
 parser.add_argument('--lr', type=float, default=0.0001, help='initial learning rate')
@@ -32,7 +32,8 @@ def train_net():
     # set result directory
     if not os.path.exists(opt.result_dir):
         os.makedirs(opt.result_dir)
-    tb_writer = tf.summary.FileWriter(opt.result_dir)
+    # tb_writer = tf.summary.FileWriter(opt.result_dir)
+    tb_writer = tf.summary.create_file_writer(opt.result_dir)
     logger = setup_logger('train_log', os.path.join(opt.result_dir, 'log.txt'))
     for key, value in vars(opt).items():
         logger.info(key + ': ' + str(value))
@@ -74,15 +75,27 @@ def train_net():
                 optimizer.zero_grad()
                 embedding, point_cloud = estimator(batch_xyz)
                 loss, _, _ = criterion(point_cloud, batch_xyz)
-                summary = tf.Summary(value=[tf.Summary.Value(tag='learning_rate', simple_value=current_lr),
-                                            tf.Summary.Value(tag='train_loss', simple_value=loss)])
+                # summary = tf.Summary(value=[tf.Summary.Value(tag='learning_rate', simple_value=current_lr),
+                #                             tf.Summary.Value(tag='train_loss', simple_value=loss)])
+
+                # summary = tf.Summary(value=[tf.Summary.Value(tag='learning_rate', simple_value=current_lr),
+                #             tf.Summary.Value(tag='train_loss', simple_value=loss)])
                 # backward
                 loss.backward()
+
                 optimizer.step()
                 global_step += 1
                 batch_idx += 1
                 # write results to tensorboard
-                tb_writer.add_summary(summary, global_step)
+                # tb_writer.add_summary(summary, global_step)
+                with tb_writer.as_default():
+                    tf.summary.scalar(
+                        'learning_rate',current_lr,global_step
+                    )
+                    tf.summary.scalar(
+                        'train_loss',loss.detach().cpu().numpy(),global_step
+                    )
+                    tb_writer.flush()
                 if batch_idx % 10 == 0:
                     logger.info('Batch {0} Loss:{1:f}'.format(batch_idx, loss))
         logger.info('>>>>>>>>----------Epoch {:02d} train finish---------<<<<<<<<'.format(epoch))
@@ -99,8 +112,13 @@ def train_net():
             val_loss += loss.item()
             logger.info('Batch {0} Loss:{1:f}'.format(i, loss))
         val_loss = val_loss / i
-        summary = tf.Summary(value=[tf.Summary.Value(tag='val_loss', simple_value=val_loss)])
-        tb_writer.add_summary(summary, global_step)
+        # summary = tf.Summary(value=[tf.Summary.Value(tag='val_loss', simple_value=val_loss)])
+        with tb_writer.as_default():
+            tf.summary.scalar(
+                'val_loss',val_loss,global_step
+            )
+            tb_writer.flush()
+        # tb_writer.add_summary(summary, global_step)
         logger.info('Epoch {0:02d} test average loss: {1:06f}'.format(epoch, val_loss))
         logger.info('>>>>>>>>----------Epoch {:02d} test finish---------<<<<<<<<'.format(epoch))
         # save model after each epoch

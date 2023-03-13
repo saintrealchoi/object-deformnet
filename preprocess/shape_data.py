@@ -4,7 +4,7 @@ import h5py
 import glob
 import numpy as np
 import _pickle as cPickle
-sys.path.append('../lib')
+sys.path.append('/home/sungjin/object-deformnet/lib')
 from utils import sample_points_from_mesh
 
 
@@ -29,6 +29,8 @@ def save_nocs_model_to_file(obj_model_dir):
             synset_dir = os.path.join(obj_model_dir, subset, synsetId)
             inst_list = sorted(os.listdir(synset_dir))
             for instance in inst_list:
+                if instance == 'd3b53f56b4a7b3b3c9f016d57db96408':
+                    continue
                 path_to_mesh_model = os.path.join(synset_dir, instance, 'model.obj')
                 model_points = sample_points_from_mesh(path_to_mesh_model, 1024, fps=True, ratio=3)
                 # flip z-axis in CAMERA
@@ -109,6 +111,8 @@ def save_model_to_hdf5(obj_model_dir, n_points, fps=False, include_distractors=F
             synset_dir = os.path.join(obj_model_dir, subset, catId_to_synsetId[catId])
             inst_list = sorted(os.listdir(synset_dir))
             for instance in inst_list:
+                if instance == 'd3b53f56b4a7b3b3c9f016d57db96408':
+                    continue
                 path_to_mesh_model = os.path.join(synset_dir, instance, 'model.obj')
                 if instance == 'b9be7cfe653740eb7633a2dd89cec754':
                     continue
@@ -210,7 +214,7 @@ def save_model_to_hdf5(obj_model_dir, n_points, fps=False, include_distractors=F
 
 
 if __name__ == '__main__':
-    obj_model_dir = '/home/tianmeng/Documents/pose_ws/object-deformnet/data/obj_models'
+    obj_model_dir = '/home/sungjin/object-deformnet/data/obj_models'
     # Save ground truth models for training deform network
     save_nocs_model_to_file(obj_model_dir)
     # Save models to HDF5 file for training the auto-encoder.

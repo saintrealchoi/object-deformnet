@@ -10,39 +10,43 @@ from lib.loss import Loss
 from data.pose_dataset import PoseDataset
 from lib.utils import setup_logger, compute_sRT_errors
 from lib.align import estimateSimilarityTransform
+import configparser
 
 from tqdm import tqdm
 import wandb
 
-wandb.init(project='object-deform')
-wandb.run.name = 'origin'
+class ArgsNamespace(argparse.Namespace):
+    def __init__(self, **kwargs):
+        self.__dict__.update(kwargs)
 
-parser = argparse.ArgumentParser()
-parser.add_argument('--dataset', type=str, default='CAMERA+Real', help='CAMERA or CAMERA+Real')
-parser.add_argument('--data_dir', type=str, default='data', help='data directory')
-parser.add_argument('--n_pts', type=int, default=1024, help='number of foreground points')
-parser.add_argument('--n_cat', type=int, default=6, help='number of object categories')
-parser.add_argument('--nv_prior', type=int, default=1024, help='number of vertices in shape priors')
-parser.add_argument('--img_size', type=int, default=192, help='cropped image size')
-parser.add_argument('--batch_size', type=int, default=64, help='batch size')
-parser.add_argument('--num_workers', type=int, default=10, help='number of data loading workers')
-parser.add_argument('--gpu', type=str, default='0', help='GPU to use')
-parser.add_argument('--lr', type=float, default=0.0001, help='initial learning rate')
-parser.add_argument('--start_epoch', type=int, default=1, help='which epoch to start')
-parser.add_argument('--max_epoch', type=int, default=25, help='max number of epochs to train')
-parser.add_argument('--resume_model', type=str, default='', help='resume from saved model')
-parser.add_argument('--result_dir', type=str, default='results/camera_real', help='directory to save train results')
-opt = parser.parse_args()
-
-opt.decay_epoch = [0, 5, 10, 15, 20]
-opt.decay_rate = [1.0, 0.6, 0.3, 0.1, 0.01]
-opt.corr_wt = 1.0
-opt.cd_wt = 5.0
-opt.entropy_wt = 0.0001
-opt.deform_wt = 0.01
-
-
-def train_net():
+def train_net(config):
+    opt = configparser.ConfigParser()
+    opt.read(config.config)
+    opt = opt._sections['Arguments']
+    opt = ArgsNamespace(**opt)
+    
+    
+    opt.n_pts = int(opt.n_pts)
+    opt.n_cat = int(opt.n_cat)
+    opt.nv_prior= int(opt.nv_prior)
+    opt.img_size=int(opt.img_size)
+    opt.batch_size=int(opt.batch_size)
+    opt.num_workers=int(opt.num_workers)
+    opt.start_epoch=int(opt.start_epoch)
+    opt.max_epoch=int(opt.max_epoch)
+    opt.lr = float(opt.lr)
+    
+        
+    if opt.wandb =='online':
+        wandb.init(project='object-deform') 
+        wandb.run.name = 'pc2048'
+        
+    opt.decay_epoch = [0, 2, 5, 7, 10]
+    opt.decay_rate = [1.0, 0.6, 0.3, 0.1, 0.01]
+    opt.corr_wt = 1.0
+    opt.cd_wt = 5.0
+    opt.entropy_wt = 0.0001
+    opt.deform_wt = 0.01
     # set result directory
     if not os.path.exists(opt.result_dir):
         os.makedirs(opt.result_dir)
@@ -58,7 +62,7 @@ def train_net():
         estimator.load_state_dict(torch.load(opt.resume_model))
     # dataset
     train_dataset = PoseDataset(opt.dataset, 'train', opt.data_dir, opt.n_pts, opt.img_size)
-    val_dataset = PoseDataset(opt.dataset, 'test', opt.data_dir, opt.n_pts, opt.img_size)
+    val_dataset = PoseDataset('CAMERA+Real', 'test', opt.data_dir, opt.n_pts, opt.img_size)
     # start training
     st_time = time.time()
     train_steps = 1500
@@ -123,14 +127,15 @@ def train_net():
                 assign_mat, deltas = estimator(points, rgb, choose, cat_id, prior)
                 loss, corr_loss, cd_loss, entropy_loss, deform_loss = criterion(assign_mat, deltas, prior, nocs, model)
                 optimizer.zero_grad()
-                wandb.log({
-                    'learning_rate' : current_lr,
-                    'train_loss' : loss,
-                    'corr_loss' : corr_loss,
-                    'cd_loss' : cd_loss,
-                    'entropy_loss' : entropy_loss,
-                    'deform_loss' : deform_loss
-                })
+                if opt.wandb == 'online':
+                    wandb.log({
+                        'learning_rate' : current_lr,
+                        'train_loss' : loss,
+                        'corr_loss' : corr_loss,
+                        'cd_loss' : cd_loss,
+                        'entropy_loss' : entropy_loss,
+                        'deform_loss' : deform_loss
+                    })
                 loss.backward()
                 optimizer.step()
                 global_step += 1
@@ -218,18 +223,22 @@ def train_net():
         easy_easy_acc = np.mean(easy_easy_acc)
         iou_acc = np.mean(iou_acc)
         val_loss = val_loss / val_size
-        wandb.log({
-                'val_loss' : current_lr,
-                '5^o5cm_acc' : strict_acc,
-                '5^o10cm_acc' : strict_easy_acc,
-                '10^o5cm_acc' : easy_acc,
-                '10^o10cm_acc' : easy_easy_acc,
-                'iou_acc' : iou_acc,
-            })
+        if opt.wandb == 'online':
+            wandb.log({
+                    'val_loss' : current_lr,
+                    '5^o5cm_acc' : strict_acc,
+                    '5^o10cm_acc' : strict_easy_acc,
+                    '10^o5cm_acc' : easy_acc,
+                    '10^o10cm_acc' : easy_easy_acc,
+                    'iou_acc' : iou_acc,
+                })
         logger.info('Epoch {0:02d} test average loss: {1:06f}'.format(epoch, val_loss))
         logger.info('Overall accuracies:')
         logger.info('5^o 5cm: {:4f} 5^o 10cm: {:4f} 10^o 5cm: {:4f} 10^o 10cm: {:4f} IoU: {:4f}'.format(strict_acc, strict_easy_acc, easy_acc, easy_easy_acc, iou_acc))
         logger.info('>>>>>>>>----------Epoch {:02d} test finish---------<<<<<<<<'.format(epoch))
 
 if __name__ == '__main__':
-    train_net()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--config', default= 'configs/camera_1024.ini', type=str, help='path to configuration file')
+    opt = parser.parse_args()
+    train_net(opt)
