@@ -12,8 +12,17 @@ import torchvision.transforms as transforms
 from lib.network import DeformNet
 from lib.align import estimateSimilarityTransform
 from lib.utils import load_depth, get_bbox, compute_mAP, plot_mAP
-
 import open3d as o3d
+from lib.auto_encoder import PointCloudAE
+
+def get_auto_encoder(model_path,emb_dim,n_pts):
+    emb_dim = emb_dim
+    n_pts = n_pts
+    ae = PointCloudAE(emb_dim, n_pts)
+    ae.cuda()
+    ae.load_state_dict(torch.load(model_path))
+    ae.eval()
+    return ae
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--data', type=str, default='real_test', help='val, real_test')
@@ -55,7 +64,7 @@ norm_color = transforms.Compose(
 def detect():
     # resume model
     viz_pcd = True
-    os.environ['CUDA_VISIBLE_DEVICES'] = opt.gpu
+    # os.environ['CUDA_VISIBLE_DEVICES'] = opt.gpu
     estimator = DeformNet(opt.n_cat, opt.nv_prior)
     estimator.cuda()
     estimator.load_state_dict(torch.load(opt.model))
@@ -141,31 +150,35 @@ def detect():
             # inference
             torch.cuda.synchronize()
             t_now = time.time()
-            SEE = 2
-            pcd = o3d.geometry.PointCloud()
-            
-            # GT point & prior
-            if viz_pcd == True:
-                pcd.points = o3d.utility.Vector3dVector(f_points[SEE].detach().cpu().numpy())
-                o3d.visualization.draw_geometries([pcd])
-            
-                pcd.points = o3d.utility.Vector3dVector(f_prior[SEE].detach().cpu().numpy())
-                o3d.visualization.draw_geometries([pcd])
             
             assign_mat, deltas = estimator(f_points, f_rgb, f_choose, f_catId, f_prior)
             # assign_mat, deltas = estimator(f_rgb, f_choose, f_catId, f_prior)
             inst_shape = f_prior + deltas
             
-            # f_prior + delta
-            if viz_pcd == True:
-                pcd.points = o3d.utility.Vector3dVector(inst_shape[SEE].detach().cpu().numpy())
-                o3d.visualization.draw_geometries([pcd])
-            
             assign_mat = F.softmax(assign_mat, dim=2)
             f_coords = torch.bmm(assign_mat, inst_shape)  # bs x n_pts x 3
             
-            # visualize assign matrix
+            
+            pcd = o3d.geometry.PointCloud()
             if viz_pcd == True:
+                SEE = 3
+                # auto_encoder_path = os.path.join('/home/choisj/git/sj/object-deformnet/results/ae_points/model_2048_512_50.pth')
+                # ae = get_auto_encoder(auto_encoder_path,512,2048)
+                # temp = ae(torch.unsqueeze(f_points[SEE],0),None)
+                # temp = torch.squeeze(temp[1],0)
+                # pcd.points = o3d.utility.Vector3dVector(temp.detach().cpu().numpy())
+                # o3d.visualization.draw_geometries([pcd])
+                
+                # GT point 
+                pcd.points = o3d.utility.Vector3dVector(f_points[SEE].detach().cpu().numpy())
+                o3d.visualization.draw_geometries([pcd])
+                # prior (mean shape)
+                pcd.points = o3d.utility.Vector3dVector(f_prior[SEE].detach().cpu().numpy())
+                o3d.visualization.draw_geometries([pcd])
+                # f_prior + delta
+                pcd.points = o3d.utility.Vector3dVector(inst_shape[SEE].detach().cpu().numpy())
+                o3d.visualization.draw_geometries([pcd])
+                # visualize assign matrix
                 pcd.points = o3d.utility.Vector3dVector(f_coords[SEE].detach().cpu().numpy())
                 o3d.visualization.draw_geometries([pcd])
             
@@ -181,10 +194,14 @@ def detect():
                 choose = f_choose[i]
                 _, choose = np.unique(choose, return_index=True)
                 nocs_coords = f_coords[i, choose, :]
+                
+                ############################################################
                 if viz_pcd == True:
                     if i == SEE:
                         pcd.points = o3d.utility.Vector3dVector(nocs_coords)
                         o3d.visualization.draw_geometries([pcd])
+                ############################################################
+                        
                 f_size[inst_idx] = 2 * np.amax(np.abs(f_insts[i]), axis=0)
                 points = f_points[i, choose, :]
                 _, _, _, pred_sRT = estimateSimilarityTransform(nocs_coords, points)

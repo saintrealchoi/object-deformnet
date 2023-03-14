@@ -28,22 +28,28 @@ class Loss(nn.Module):
         # smooth L1 loss for correspondences
         soft_assign = F.softmax(assign_mat, dim=2)
         coords = torch.bmm(soft_assign, inst_shape)  # bs x n_pts x 3
+        
+        # correspondence Loss
         diff = torch.abs(coords - nocs)
         less = torch.pow(diff, 2) / (2.0 * self.threshold)
         higher = diff - self.threshold / 2.0
         corr_loss = torch.where(diff > self.threshold, higher, less)
         corr_loss = torch.mean(torch.sum(corr_loss, dim=2))
         corr_loss = self.corr_wt * corr_loss
+        
         # entropy loss to encourage peaked distribution
         log_assign = F.log_softmax(assign_mat, dim=2)
         entropy_loss = torch.mean(-torch.sum(soft_assign * log_assign, 2))
         entropy_loss = self.entropy_wt * entropy_loss
+        
         # cd-loss for instance reconstruction
         cd_loss, _, _ = self.chamferloss(inst_shape, model)
         cd_loss = self.cd_wt * cd_loss
+        
         # L2 regularizations on deformation
         deform_loss = torch.norm(deltas, p=2, dim=2).mean()
         deform_loss = self.deform_wt * deform_loss
+        
         # total loss
         total_loss = corr_loss + entropy_loss + cd_loss + deform_loss
         return total_loss, corr_loss, cd_loss, entropy_loss, deform_loss

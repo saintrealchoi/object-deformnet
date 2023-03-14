@@ -253,6 +253,6 @@ if __name__ == '__main__':
   print(opt)
   result_name = 'inference'
   path = 'data/'+result_name
-  output_path = pathlib.Path(path) / opt.model[-7:-5]
+  output_path = pathlib.Path(path) / opt.model[-12:-4]
   output_path.mkdir(parents=True, exist_ok=True)
   inference(opt, opt.data_dir, output_path)
