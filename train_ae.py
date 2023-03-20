@@ -10,7 +10,7 @@ from lib.utils import setup_logger
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--num_point', type=int, default=1024, help='number of points, needed if use points')
+parser.add_argument('--num_point', type=int, default=2048, help='number of points, needed if use points')
 parser.add_argument('--emb_dim', type=int, default=512, help='dimension of latent embedding [default: 512]')
 parser.add_argument('--h5_file', type=str, default='data/obj_models/ShapeNetCore_4096.h5', help='h5 file')
 parser.add_argument('--batch_size', type=int, default=32, help='batch size')
@@ -19,7 +19,7 @@ parser.add_argument('--gpu', type=str, default='0', help='GPU to use')
 parser.add_argument('--lr', type=float, default=0.0001, help='initial learning rate')
 parser.add_argument('--start_epoch', type=int, default=1, help='which epoch to start')
 parser.add_argument('--max_epoch', type=int, default=50, help='max number of epochs to train')
-parser.add_argument('--resume_model', type=str, default='', help='resume from saved model')
+parser.add_argument('--resume_model', type=str, default='results/ae_points/model_2048_512_50.pth', help='resume from saved model')
 parser.add_argument('--result_dir', type=str, default='results/ae_points', help='directory to save train results')
 opt = parser.parse_args()
 

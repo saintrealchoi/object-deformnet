@@ -156,6 +156,7 @@ def load_depth(img_path):
     """ Load depth image from img_path. """
     depth_path = img_path + '_depth.png'
     depth = cv2.imread(depth_path, -1)
+    
     if len(depth.shape) == 3:
         # This is encoded depth image, let's convert
         # NOTE: RGB is actually BGR in opencv
@@ -168,6 +169,27 @@ def load_depth(img_path):
         assert False, '[ Error ]: Unsupported depth type.'
     return depth16
 
+def load_pseudo_depth(img_path):
+    """ Load depth image from img_path. """
+    depth_path = img_path + '_depth.png'
+    depth = cv2.imread(depth_path, -1)
+    # TODO: Pseudo Depth for real dataset
+    pseudo_depth_path = '/home/choisj/git/CenterSnap/data/inference/_4/' + '/'.join(img_path.split('/')[2:]) + '_depth.png'
+    pseudo_depth = cv2.imread(pseudo_depth_path,-1)
+    mask = (depth==0)
+    depth[mask] = pseudo_depth[mask]
+    
+    if len(depth.shape) == 3:
+        # This is encoded depth image, let's convert
+        # NOTE: RGB is actually BGR in opencv
+        depth16 = depth[:, :, 1]*256 + depth[:, :, 2]
+        depth16 = np.where(depth16==32001, 0, depth16)
+        depth16 = depth16.astype(np.uint16)
+    elif len(depth.shape) == 2 and depth.dtype == 'uint16':
+        depth16 = depth
+    else:
+        assert False, '[ Error ]: Unsupported depth type.'
+    return depth16
 
 def get_bbox(bbox):
     """ Compute square image crop window. """

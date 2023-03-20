@@ -9,41 +9,47 @@ import _pickle as cPickle
 import torch
 import torch.nn.functional as F
 import torchvision.transforms as transforms
-from lib.network import DeformNet
+from lib.network import DeformNet,AEDeformNet
 from lib.align import estimateSimilarityTransform
-from lib.utils import load_depth, get_bbox, compute_mAP, plot_mAP
+from lib.utils import load_depth, load_pseudo_depth,get_bbox, compute_mAP, plot_mAP
+import open3d as o3d
 from lib.auto_encoder import PointCloudAE
 
-def get_auto_encoder(model_path):
-    emb_dim = 512
-    n_pts = 1024
+def get_auto_encoder(model_path,emb_dim,n_pts):
+    emb_dim = emb_dim
+    n_pts = n_pts
     ae = PointCloudAE(emb_dim, n_pts)
     ae.cuda()
     ae.load_state_dict(torch.load(model_path))
     ae.eval()
     return ae
 
-
 parser = argparse.ArgumentParser()
 parser.add_argument('--data', type=str, default='real_test', help='val, real_test')
 parser.add_argument('--data_dir', type=str, default='data', help='data directory')
 parser.add_argument('--n_cat', type=int, default=6, help='number of object categories')
-parser.add_argument('--nv_prior', type=int, default=1024, help='number of vertices in shape priors')
-parser.add_argument('--model', type=str, default='', help='resume from saved model')
-parser.add_argument('--n_pts', type=int, default=1024, help='number of foreground points')
+parser.add_argument('--nv_prior', type=int, default=4096, help='number of vertices in shape priors')
+parser.add_argument('--model', type=str, default='/home/choisj/git/sj/object-deformnet/results/ae_train_4096_512/model_10.pth', help='resume from saved model')
+parser.add_argument('--n_pts', type=int, default=4096, help='number of foreground points')
 parser.add_argument('--img_size', type=int, default=192, help='cropped image size')
-parser.add_argument('--gpu', type=str, default='1', help='GPU to use')
+parser.add_argument('--gpu', type=str, default='0', help='GPU to use')
 opt = parser.parse_args()
 
 mean_shapes = np.load('assets/mean_points_emb.npy')
 
 assert opt.data in ['val', 'real_test']
+model_file_path = ['obj_models/real_test.pkl']
+
+
+
 if opt.data == 'val':
     result_dir = 'results/eval_camera'
     file_path = 'CAMERA/val_list.txt'
     cam_fx, cam_fy, cam_cx, cam_cy = 577.5, 577.5, 319.5, 239.5
 else:
-    result_dir = 'results/eval_real'
+    # result_dir = 'results/eval_real'
+    temp_dir_path = '_'.join(opt.model.split('/')[-2:])[:-4]
+    result_dir = 'results/eval_' + temp_dir_path
     file_path = 'Real/test_list.txt'
     cam_fx, cam_fy, cam_cx, cam_cy = 591.0125, 590.16775, 322.525, 244.11084
 
@@ -60,9 +66,16 @@ norm_color = transforms.Compose(
 
 
 def detect():
+    models = {}
+    for path in model_file_path:
+        with open(os.path.join(opt.data_dir, path), 'rb') as f:
+            models.update(cPickle.load(f))
+    models = models
     # resume model
-    os.environ['CUDA_VISIBLE_DEVICES'] = opt.gpu
-    estimator = DeformNet(opt.n_cat, opt.nv_prior)
+    viz_pcd = True
+    # os.environ['CUDA_VISIBLE_DEVICES'] = opt.gpu
+    opt.emb = 512
+    estimator = AEDeformNet(opt.n_cat, opt.nv_prior, opt.emb)
     estimator.cuda()
     estimator.load_state_dict(torch.load(opt.model))
     estimator.eval()
@@ -75,32 +88,34 @@ def detect():
     inst_count = 0
     img_count = 0
     t_start = time.time()
-    auto_encoder_path = os.path.join('/home/choisj/git/sj/object-deformnet/results/ae_points/model_50.pth')
-    ae = get_auto_encoder(auto_encoder_path)
     for path in tqdm(img_list):
         img_path = os.path.join(opt.data_dir, path)
         raw_rgb = cv2.imread(img_path + '_color.png')[:, :, :3]
         raw_rgb = raw_rgb[:, :, ::-1]
-        raw_depth = load_depth(img_path)
+        raw_depth = load_pseudo_depth(img_path)
         # load mask-rcnn detection results
         img_path_parsing = img_path.split('/')
         mrcnn_path = os.path.join('results/mrcnn_results', opt.data, 'results_{}_{}_{}.pkl'.format(
-            opt.data.split('_')[-1], img_path_parsing[-2], img_path_parsing[-1]))
+            opt.data.split('_')[-1], img_path_parsing[-2], img_path_parsing[-1]))        
         with open(mrcnn_path, 'rb') as f:
             mrcnn_result = cPickle.load(f)
         num_insts = len(mrcnn_result['class_ids'])
         f_sRT = np.zeros((num_insts, 4, 4), dtype=float)
-        f_shape = np.zeros((num_insts, 1024, 3), dtype=float)
+        f_shape = np.zeros((num_insts, 2048, 3), dtype=float)
         f_size = np.zeros((num_insts, 3), dtype=float)
         # prepare frame data
-        f_points, f_rgb, f_choose, f_catId, f_prior = [], [], [], [], []
+        f_points, f_rgb, f_choose, f_catId, f_prior,f_model = [], [], [], [], [], []
         valid_inst = []
+        with open(img_path + '_label.pkl', 'rb') as f:
+            gts = cPickle.load(f)
         for i in range(num_insts):
             cat_id = mrcnn_result['class_ids'][i] - 1
             prior = mean_shapes[cat_id]
             rmin, rmax, cmin, cmax = get_bbox(mrcnn_result['rois'][i])
             mask = np.logical_and(mrcnn_result['masks'][:, :, i], raw_depth > 0)
             choose = mask[rmin:rmax, cmin:cmax].flatten().nonzero()[0]
+            model = models[gts['model_list'][i]].astype(np.float32)     # 1024 points
+            
             # no depth observation for background in CAMERA dataset
             # beacuase of how we compute the bbox in function get_bbox
             # there might be a chance that no foreground points after cropping the mask
@@ -126,17 +141,6 @@ def detect():
             pt0 = (xmap_masked - cam_cx) * pt2 / cam_fx
             pt1 = (ymap_masked - cam_cy) * pt2 / cam_fy
             points = np.concatenate((pt0, pt1, pt2), axis=1)
-            
-            ##
-            f_points.append(points)
-            
-            points = torch.from_numpy(points).unsqueeze(0)
-            points = points.float().cuda()
-            
-            prior = ae(points,None)[1]
-            prior = prior.detach().cpu().numpy()
-            prior = prior[0]
-            
             rgb = raw_rgb[rmin:rmax, cmin:cmax, :]
             rgb = cv2.resize(rgb, (opt.img_size, opt.img_size), interpolation=cv2.INTER_LINEAR)
             rgb = norm_color(rgb)
@@ -146,69 +150,37 @@ def detect():
             row_idx = choose // crop_w
             choose = (np.floor(row_idx * ratio) * opt.img_size + np.floor(col_idx * ratio)).astype(np.int64)
             # concatenate instances
-            # f_points.append(points)
+            f_points.append(points)
             f_rgb.append(rgb)
             f_choose.append(choose)
             f_catId.append(cat_id)
             f_prior.append(prior)
+            f_model.append(model)
         if len(valid_inst):
             f_points = torch.cuda.FloatTensor(f_points)
             f_rgb = torch.stack(f_rgb, dim=0).cuda()
             f_choose = torch.cuda.LongTensor(f_choose)
             f_catId = torch.cuda.LongTensor(f_catId)
             f_prior = torch.cuda.FloatTensor(f_prior)
+            f_model = torch.cuda.FloatTensor(f_model)
             # inference
             torch.cuda.synchronize()
             t_now = time.time()
-            assign_mat, deltas = estimator(f_points, f_rgb, f_choose, f_catId, f_prior)
-            # assign_mat, deltas = estimator(f_rgb, f_choose, f_catId, f_prior)
-            inst_shape = f_prior + deltas
-            assign_mat = F.softmax(assign_mat, dim=2)
-            f_coords = torch.bmm(assign_mat, inst_shape)  # bs x n_pts x 3
-            torch.cuda.synchronize()
-            t_inference += (time.time() - t_now)
-            f_coords = f_coords.detach().cpu().numpy()
-            f_points = f_points.cpu().numpy()
-            f_choose = f_choose.cpu().numpy()
-            f_insts = inst_shape.detach().cpu().numpy()
-            t_now = time.time()
-            for i in range(len(valid_inst)):
-                inst_idx = valid_inst[i]
-                choose = f_choose[i]
-                _, choose = np.unique(choose, return_index=True)
-                nocs_coords = f_coords[i, choose, :]
-                f_size[inst_idx] = 2 * np.amax(np.abs(f_insts[i]), axis=0)
-                points = f_points[i, choose, :]
-                _, _, _, pred_sRT = estimateSimilarityTransform(nocs_coords, points)
-                if pred_sRT is None:
-                    pred_sRT = np.identity(4, dtype=float)
-                f_sRT[inst_idx] = pred_sRT
-                f_shape[inst_idx] = f_insts[i]
-            t_umeyama += (time.time() - t_now)
-            img_count += 1
-            inst_count += len(valid_inst)
+            
+            embedding, point_cloud = estimator(f_points, f_model)
+            # assign_mat, deltas = estimator(f_points, f_rgb, f_choose, f_catId, f_prior)
+            
+            pcd = o3d.geometry.PointCloud()
+            for i in range(num_insts):
+                pcd.points = o3d.utility.Vector3dVector(f_points[3].detach().cpu().numpy())
+                o3d.visualization.draw_geometries([pcd])
+                pcd.points = o3d.utility.Vector3dVector(f_model[3].detach().cpu().numpy())
+                o3d.visualization.draw_geometries([pcd])
+                pcd.points = o3d.utility.Vector3dVector(point_cloud[3].detach().cpu().numpy())
+                o3d.visualization.draw_geometries([pcd])
+            
+            
 
-        # save results
-        result = {}
-        with open(img_path + '_label.pkl', 'rb') as f:
-            gts = cPickle.load(f)
-        result['gt_class_ids'] = gts['class_ids']
-        result['gt_bboxes'] = gts['bboxes']
-        result['gt_RTs'] = gts['poses']
-        result['gt_scales'] = gts['size']
-        result['gt_handle_visibility'] = gts['handle_visibility']
-
-        result['pred_class_ids'] = mrcnn_result['class_ids']
-        result['pred_bboxes'] = mrcnn_result['rois']
-        result['pred_scores'] = mrcnn_result['scores']
-        result['pred_RTs'] = f_sRT
-        result['pred_scales'] = f_size
-        result['pred_shape'] = f_shape
-
-        image_short_path = '_'.join(img_path_parsing[-3:])
-        save_path = os.path.join(result_dir, 'results_{}.pkl'.format(image_short_path))
-        with open(save_path, 'wb') as f:
-            cPickle.dump(result, f)
     # write statistics
     fw = open('{0}/eval_logs.txt'.format(result_dir), 'w')
     messages = []
@@ -276,6 +248,62 @@ def evaluate():
     messages.append('5 degree, 10cm: {:.1f}'.format(pose_acc[-1, degree_05_idx, shift_10_idx] * 100))
     messages.append('10 degree, 5cm: {:.1f}'.format(pose_acc[-1, degree_10_idx, shift_05_idx] * 100))
     messages.append('10 degree, 10cm: {:.1f}'.format(pose_acc[-1, degree_10_idx, shift_10_idx] * 100))
+    
+    messages.append('1')
+    messages.append('3D IoU at 25: {:.1f}'.format(iou_aps[1, iou_25_idx] * 100))
+    messages.append('3D IoU at 50: {:.1f}'.format(iou_aps[1, iou_50_idx] * 100))
+    messages.append('3D IoU at 75: {:.1f}'.format(iou_aps[1, iou_75_idx] * 100))
+    messages.append('5 degree, 5cm: {:.1f}'.format(pose_aps[1, degree_05_idx, shift_05_idx] * 100))
+    messages.append('5 degree, 10cm: {:.1f}'.format(pose_aps[1, degree_05_idx, shift_10_idx] * 100))
+    messages.append('10 degree, 5cm: {:.1f}'.format(pose_aps[1, degree_10_idx, shift_05_idx] * 100))
+    messages.append('10 degree, 10cm: {:.1f}'.format(pose_aps[1, degree_10_idx, shift_10_idx] * 100))
+
+    messages.append('2')
+    messages.append('3D IoU at 25: {:.1f}'.format(iou_aps[2, iou_25_idx] * 100))
+    messages.append('3D IoU at 50: {:.1f}'.format(iou_aps[2, iou_50_idx] * 100))
+    messages.append('3D IoU at 75: {:.1f}'.format(iou_aps[2, iou_75_idx] * 100))
+    messages.append('5 degree, 5cm: {:.1f}'.format(pose_aps[2, degree_05_idx, shift_05_idx] * 100))
+    messages.append('5 degree, 10cm: {:.1f}'.format(pose_aps[2, degree_05_idx, shift_10_idx] * 100))
+    messages.append('10 degree, 5cm: {:.1f}'.format(pose_aps[2, degree_10_idx, shift_05_idx] * 100))
+    messages.append('10 degree, 10cm: {:.1f}'.format(pose_aps[2, degree_10_idx, shift_10_idx] * 100))
+
+
+    messages.append('3')
+    messages.append('3D IoU at 25: {:.1f}'.format(iou_aps[3, iou_25_idx] * 100))
+    messages.append('3D IoU at 50: {:.1f}'.format(iou_aps[3, iou_50_idx] * 100))
+    messages.append('3D IoU at 75: {:.1f}'.format(iou_aps[3, iou_75_idx] * 100))
+    messages.append('5 degree, 5cm: {:.1f}'.format(pose_aps[3, degree_05_idx, shift_05_idx] * 100))
+    messages.append('5 degree, 10cm: {:.1f}'.format(pose_aps[3, degree_05_idx, shift_10_idx] * 100))
+    messages.append('10 degree, 5cm: {:.1f}'.format(pose_aps[3, degree_10_idx, shift_05_idx] * 100))
+    messages.append('10 degree, 10cm: {:.1f}'.format(pose_aps[3, degree_10_idx, shift_10_idx] * 100))
+
+    messages.append('4')
+    messages.append('3D IoU at 25: {:.1f}'.format(iou_aps[4, iou_25_idx] * 100))
+    messages.append('3D IoU at 50: {:.1f}'.format(iou_aps[4, iou_50_idx] * 100))
+    messages.append('3D IoU at 75: {:.1f}'.format(iou_aps[4, iou_75_idx] * 100))
+    messages.append('5 degree, 5cm: {:.1f}'.format(pose_aps[4, degree_05_idx, shift_05_idx] * 100))
+    messages.append('5 degree, 10cm: {:.1f}'.format(pose_aps[4, degree_05_idx, shift_10_idx] * 100))
+    messages.append('10 degree, 5cm: {:.1f}'.format(pose_aps[4, degree_10_idx, shift_05_idx] * 100))
+    messages.append('10 degree, 10cm: {:.1f}'.format(pose_aps[4, degree_10_idx, shift_10_idx] * 100))
+
+    messages.append('5')
+    messages.append('3D IoU at 25: {:.1f}'.format(iou_aps[5, iou_25_idx] * 100))
+    messages.append('3D IoU at 50: {:.1f}'.format(iou_aps[5, iou_50_idx] * 100))
+    messages.append('3D IoU at 75: {:.1f}'.format(iou_aps[5, iou_75_idx] * 100))
+    messages.append('5 degree, 5cm: {:.1f}'.format(pose_aps[5, degree_05_idx, shift_05_idx] * 100))
+    messages.append('5 degree, 10cm: {:.1f}'.format(pose_aps[5, degree_05_idx, shift_10_idx] * 100))
+    messages.append('10 degree, 5cm: {:.1f}'.format(pose_aps[5, degree_10_idx, shift_05_idx] * 100))
+    messages.append('10 degree, 10cm: {:.1f}'.format(pose_aps[5, degree_10_idx, shift_10_idx] * 100))
+    
+    messages.append('6')
+    messages.append('3D IoU at 25: {:.1f}'.format(iou_aps[6, iou_25_idx] * 100))
+    messages.append('3D IoU at 50: {:.1f}'.format(iou_aps[6, iou_50_idx] * 100))
+    messages.append('3D IoU at 75: {:.1f}'.format(iou_aps[6, iou_75_idx] * 100))
+    messages.append('5 degree, 5cm: {:.1f}'.format(pose_aps[6, degree_05_idx, shift_05_idx] * 100))
+    messages.append('5 degree, 10cm: {:.1f}'.format(pose_aps[6, degree_05_idx, shift_10_idx] * 100))
+    messages.append('10 degree, 5cm: {:.1f}'.format(pose_aps[6, degree_10_idx, shift_05_idx] * 100))
+    messages.append('10 degree, 10cm: {:.1f}'.format(pose_aps[6, degree_10_idx, shift_10_idx] * 100))
+    
     for msg in messages:
         print(msg)
         fw.write(msg + '\n')

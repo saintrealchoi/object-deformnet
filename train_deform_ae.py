@@ -5,7 +5,7 @@ import random
 import numpy as np
 import torch
 import torch.nn.functional as F
-from lib.network import DeformNet
+from lib.network import DeformNet,AEDeformNet
 from lib.loss import Loss
 from data.pose_dataset import PoseDataset
 from lib.utils import setup_logger, compute_sRT_errors
@@ -13,57 +13,57 @@ from lib.align import estimateSimilarityTransform
 from lib.auto_encoder import PointCloudAE
 from tqdm import tqdm
 import wandb
-
-
-
+from lib.loss import ChamferLoss
+import open3d as o3d
+import matplotlib.pyplot as plt
 parser = argparse.ArgumentParser()
-# parser.add_argument('--dataset', type=str, default='CAMERA', help='CAMERA or CAMERA+Real')
 parser.add_argument('--dataset', type=str, default='Real', help='CAMERA or CAMERA+Real')
+# parser.add_argument('--dataset', type=str, default='Real', help='CAMERA or CAMERA+Real')
 parser.add_argument('--data_dir', type=str, default='data', help='data directory')
-parser.add_argument('--n_pts', type=int, default=2048, help='number of foreground points')
+parser.add_argument('--n_pts', type=int, default=4096, help='number of foreground points')
 parser.add_argument('--n_cat', type=int, default=6, help='number of object categories')
-parser.add_argument('--nv_prior', type=int, default=2048, help='number of vertices in shape priors')
+parser.add_argument('--nv_prior', type=int, default=4096, help='number of vertices in shape priors')
 parser.add_argument('--img_size', type=int, default=192, help='cropped image size')
-parser.add_argument('--batch_size', type=int, default=32, help='batch size')
-parser.add_argument('--num_workers', type=int, default=10, help='number of data loading workers')
+parser.add_argument('--batch_size', type=int, default=64, help='batch size')
+parser.add_argument('--num_workers', type=int, default=8, help='number of data loading workers')
 parser.add_argument('--gpu', type=str, default='0', help='GPU to use')
 parser.add_argument('--lr', type=float, default=0.0001, help='initial learning rate')
 parser.add_argument('--start_epoch', type=int, default=1, help='which epoch to start')
 # parser.add_argument('--max_epoch', type=int, default=50, help='max number of epochs to train')
 parser.add_argument('--max_epoch', type=int, default=12, help='max number of epochs to train')
-parser.add_argument('--resume_model', type=str, default='results/camera_2048_128_ae/model_50.pth', help='resume from saved model')
-# parser.add_argument('--resume_model', type=str, default='', help='resume from saved model')
-parser.add_argument('--result_dir', type=str, default='results/real_2048_128_ae', help='directory to save train results')
-parser.add_argument('--wandb', type=str, default='online', help='wandb online mode')
-parser.add_argument('--ae_model', type=str, default='/home/choisj/git/sj/object-deformnet/results/camera_2048_128_ae/ae_model_50.pth', help='wandb online mode')
-
+parser.add_argument('--resume_model', type=str, default='/home/choisj/git/sj/object-deformnet/results/ae_train_4096_512/model_12.pth', help='resume from saved model')
+# parser.add_argument('--resume_model', type=str, default='/home/choisj/git/sj/object-deformnet/results/ae_train/model_12.pth', help='resume from saved model')
+# parser.add_argument('--resume_model', type=str, default='results/camera_2048_emb/model_50.pth', help='resume from saved model')
+parser.add_argument('--result_dir', type=str, default='results/ae_train_4096_512', help='directory to save train results')
+parser.add_argument('--wandb', type=str, default='offline', help='wandb online mode')
 opt = parser.parse_args()
 
 # opt.decay_epoch = [0, 3, 5]
 opt.decay_epoch = [0, 6, 10]
 # opt.decay_epoch = [0, 5, 10, 15, 20]
 # opt.decay_epoch = [0, 10, 20, 30, 40]
-opt.decay_rate = [1.0, 0.6, 0.01]
+opt.decay_rate = [1.0, 0.6, 0.1]
+# opt.decay_rate = [1.0, 0.6, 0.01]
 # opt.decay_rate = [1.0, 0.6, 0.3, 0.1, 0.01]
 opt.corr_wt = 1.0
 # opt.cd_wt = 25.0
-opt.cd_wt = 10.0
+opt.cd_wt = 5.0
 opt.entropy_wt = 0.0001
 # opt.deform_wt = 0.05
 opt.deform_wt = 0.01
-opt.emb = 128
+opt.emb = 512
 
 if opt.wandb =='online':
-    wandb.init(project='ae-object-deform') 
-    wandb.run.name = 'pseudo_depth + ae'
+    wandb.init(project='object-deform') 
+    wandb.run.name = 'finetune fusion depth + pseudo depth'
     
 def get_auto_encoder(model_path):
-    emb_dim = 128
+    emb_dim = opt.emb
     n_pts = 2048
     ae = PointCloudAE(emb_dim, n_pts)
     ae.cuda()
     ae.load_state_dict(torch.load(model_path))
-    # ae.eval()
+    ae.eval()
     return ae
 
 def train_net():
@@ -75,9 +75,9 @@ def train_net():
         logger.info(key + ': ' + str(value))
     os.environ['CUDA_VISIBLE_DEVICES'] = opt.gpu
     # model & loss
-    estimator = DeformNet(opt.n_cat, opt.nv_prior, opt.emb)
+    estimator = AEDeformNet(opt.n_cat, opt.nv_prior, opt.emb)
     estimator.cuda()
-    criterion = Loss(opt.corr_wt, opt.cd_wt, opt.entropy_wt, opt.deform_wt)
+    criterion = ChamferLoss()
     if opt.resume_model != '':
         estimator.load_state_dict(torch.load(opt.resume_model))
     # dataset
@@ -96,10 +96,6 @@ def train_net():
     train_size = train_steps * opt.batch_size
     indices = []
     page_start = -train_size
-    
-    auto_encoder_path = opt.ae_model
-    ae = get_auto_encoder(auto_encoder_path)
-    
     for epoch in range(opt.start_epoch, opt.max_epoch + 1):
         # train one epoch
         logger.info('Time {0}'.format(time.strftime("%Hh %Mm %Ss", time.gmtime(time.time() - st_time)) + \
@@ -141,53 +137,44 @@ def train_net():
         # ae = get_auto_encoder(auto_encoder_path)
         
         # for i, data in tqdm(enumerate(train_dataloader, 1)):
+        pcd = o3d.geometry.PointCloud()
         with tqdm(train_dataloader, unit='batch') as tepoch:
             for i,data in enumerate(tepoch):
                 tepoch.set_description(f"Epoch {epoch}")
                 points, rgb, choose, cat_id, model, prior, sRT, nocs= data
                 points = points.cuda()
-                rgb = rgb.cuda()
-                choose = choose.cuda()
-                cat_id = cat_id.cuda()
                 model = model.cuda()
-                prior = prior.cuda()
-                sRT = sRT.cuda()
-                nocs = nocs.cuda()
                 
-                prior = ae(points,None)[1]
+                embedding, point_cloud = estimator(points, model)
+                # for i in range(32):
+                    # plt.imshow(rgb[i].permute(2,1,0).detach().cpu().numpy())
+                    # plt.show()
+                pcd.points = o3d.utility.Vector3dVector(points[0].detach().cpu().numpy())
+                o3d.visualization.draw_geometries([pcd])
+                pcd.points = o3d.utility.Vector3dVector(model[0].detach().cpu().numpy())
+                o3d.visualization.draw_geometries([pcd])
+                pcd.points = o3d.utility.Vector3dVector(point_cloud[0].detach().cpu().numpy())
+                o3d.visualization.draw_geometries([pcd])
                 
-                assign_mat, deltas = estimator(points, rgb, choose, cat_id, prior)
-                
-                loss, corr_loss, cd_loss, entropy_loss, deform_loss = criterion(assign_mat, deltas, prior, nocs, model)
+                loss,_,_ = criterion(point_cloud, model)
                 optimizer.zero_grad()
                 if opt.wandb == 'online':
                     wandb.log({
                         'learning_rate' : current_lr,
                         'train_loss' : loss,
-                        'corr_loss' : corr_loss,
-                        'cd_loss' : cd_loss,
-                        'entropy_loss' : entropy_loss,
-                        'deform_loss' : deform_loss
                     })
                 loss.backward()
                 optimizer.step()
                 global_step += 1
-                tepoch.set_postfix(loss=loss.item(),corr_loss=corr_loss.item(), cd_loss=cd_loss.item(), entropy_loss=entropy_loss.item(), deform_loss=deform_loss.item())
+                tepoch.set_postfix(loss=loss.item())
 
         logger.info('>>>>>>>>----------Epoch {:02d} train finish---------<<<<<<<<'.format(epoch))
         # save model after each epoch
         torch.save(estimator.state_dict(), '{0}/model_{1:02d}.pth'.format(opt.result_dir, epoch))
-        torch.save(ae.state_dict(), '{0}/ae_model_{1:02d}.pth'.format(opt.result_dir, epoch))
         # evaluate one epoch
         logger.info('Time {0}'.format(time.strftime("%Hh %Mm %Ss", time.gmtime(time.time() - st_time)) +
                     ', ' + 'Epoch %02d' % epoch + ', ' + 'Testing started'))
         val_loss = 0.0
-        total_count = np.zeros((opt.n_cat,), dtype=int)
-        strict_success = np.zeros((opt.n_cat,), dtype=int)           # 5 degree and 5 cm
-        strict_easy_success = np.zeros((opt.n_cat,), dtype=int)      # 5 degree and 10 cm
-        easy_success = np.zeros((opt.n_cat,), dtype=int)             # 10 degree and 5 cm
-        easy_easy_success = np.zeros((opt.n_cat,), dtype=int)        # 10 degree and 10 cm
-        iou_success = np.zeros((opt.n_cat,), dtype=int)              # relative scale error < 0.1
         # sample validation subset
         val_size = 500
         val_idx = random.sample(list(range(val_dataset.length)), val_size)
@@ -199,79 +186,16 @@ def train_net():
             for i,data in enumerate(tepoch):
                 points, rgb, choose, cat_id, model, prior, sRT, nocs = data
                 points = points.cuda()
-                rgb = rgb.cuda()
-                choose = choose.cuda()
-                cat_id = cat_id.cuda()
                 model = model.cuda()
-                prior = prior.cuda()
-                sRT = sRT.cuda()
-                nocs = nocs.cuda()
                 
-                prior = ae(points,None)[1]
-                
-                assign_mat, deltas = estimator(points, rgb, choose, cat_id, prior)
-                loss, _, _, _, _ = criterion(assign_mat, deltas, prior, nocs, model)
+                embedding, point_cloud = estimator(points, model)
+                loss,_,_ = criterion(point_cloud, model)
                 # estimate pose and scale
-                inst_shape = prior + deltas
-                assign_mat = F.softmax(assign_mat, dim=2)
-                nocs_coords = torch.bmm(assign_mat, inst_shape)
-                nocs_coords = nocs_coords.detach().cpu().numpy()[0]
-                points = points.cpu().numpy()[0]
-                # use choose to remove repeated points
-                choose = choose.cpu().numpy()[0]
-                _, choose = np.unique(choose, return_index=True)
-                nocs_coords = nocs_coords[choose, :]
-                points = points[choose, :]
-                _, _, _, pred_sRT = estimateSimilarityTransform(nocs_coords, points)
-                # evaluate pose
-                cat_id = cat_id.item()
-                if pred_sRT is not None:
-                    sRT = sRT.detach().cpu().numpy()[0]
-                    R_error, T_error, IoU = compute_sRT_errors(pred_sRT, sRT)
-                    if R_error < 5 and T_error < 0.05:
-                        strict_success[cat_id] += 1
-                    if R_error < 5 and T_error < 0.1:
-                        strict_easy_success[cat_id] += 1
-                    if R_error < 10 and T_error < 0.1:
-                        easy_easy_success[cat_id] += 1
-                    if R_error < 10 and T_error < 0.05:
-                        easy_success[cat_id] += 1
-                    if IoU < 0.1:
-                        iou_success[cat_id] += 1
-                total_count[cat_id] += 1
                 val_loss += loss.item()
                 tepoch.set_postfix(loss=loss.item())
         # compute accuracy
-        strict_acc = 100 * (strict_success / total_count)
-        strict_easy_acc = 100 * (strict_easy_success / total_count)
-        easy_acc = 100 * (easy_success / total_count)
-        easy_easy_acc = 100 * (easy_easy_success / total_count)
-        iou_acc = 100 * (iou_success / total_count)
-        for i in range(opt.n_cat):
-            logger.info('{} accuracies:'.format(val_dataset.cat_names[i]))
-            logger.info('5^o 5cm: {:4f}'.format(strict_acc[i]))
-            logger.info('5^o 10cm: {:4f}'.format(strict_easy_acc[i]))
-            logger.info('10^o 5cm: {:4f}'.format(easy_acc[i]))
-            logger.info('10^o 10cm: {:4f}'.format(easy_easy_acc[i]))
-            logger.info('IoU < 0.1: {:4f}'.format(iou_acc[i]))
-        strict_acc = np.mean(strict_acc)
-        strict_easy_acc = np.mean(strict_easy_acc)
-        easy_acc = np.mean(easy_acc)
-        easy_easy_acc = np.mean(easy_easy_acc)
-        iou_acc = np.mean(iou_acc)
         val_loss = val_loss / val_size
-        if opt.wandb == 'online':
-            wandb.log({
-                    'val_loss' : current_lr,
-                    '5^o5cm_acc' : strict_acc,
-                    '5^o10cm_acc' : strict_easy_acc,
-                    '10^o5cm_acc' : easy_acc,
-                    '10^o10cm_acc' : easy_easy_acc,
-                    'iou_acc' : iou_acc,
-                })
         logger.info('Epoch {0:02d} test average loss: {1:06f}'.format(epoch, val_loss))
-        logger.info('Overall accuracies:')
-        logger.info('5^o 5cm: {:4f} 5^o 10cm: {:4f} 10^o 5cm: {:4f} 10^o 10cm: {:4f} IoU: {:4f}'.format(strict_acc, strict_easy_acc, easy_acc, easy_easy_acc, iou_acc))
         logger.info('>>>>>>>>----------Epoch {:02d} test finish---------<<<<<<<<'.format(epoch))
 
 if __name__ == '__main__':

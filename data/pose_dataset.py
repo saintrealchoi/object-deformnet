@@ -7,7 +7,7 @@ import _pickle as cPickle
 from PIL import Image
 import torch.utils.data as data
 import torchvision.transforms as transforms
-from lib.utils import load_depth, get_bbox
+from lib.utils import load_depth, get_bbox, load_pseudo_depth
 
 
 class PoseDataset(data.Dataset):
@@ -94,7 +94,10 @@ class PoseDataset(data.Dataset):
         img_path = os.path.join(self.data_dir, self.img_list[index])
         rgb = cv2.imread(img_path + '_color.png')[:, :, :3]
         rgb = rgb[:, :, ::-1]
-        depth = load_depth(img_path)
+        if img_path.split('/')[1] == 'CAMERA':
+            depth = load_depth(img_path)
+        else:
+            depth = load_pseudo_depth(img_path)
         mask = cv2.imread(img_path + '_mask.png')[:, :, 2]
         coord = cv2.imread(img_path + '_coord.png')[:, :, :3]
         coord = coord[:, :, (2, 1, 0)]

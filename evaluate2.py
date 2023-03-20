@@ -11,13 +11,13 @@ import torch.nn.functional as F
 import torchvision.transforms as transforms
 from lib.network import DeformNet
 from lib.align import estimateSimilarityTransform
-from lib.utils import load_depth, get_bbox, compute_mAP, plot_mAP
+from lib.utils import load_depth,load_pseudo_depth, get_bbox, compute_mAP, plot_mAP
 import open3d as o3d
 from lib.auto_encoder import PointCloudAE
 
-def get_auto_encoder(model_path,emb_dim,n_pts):
-    emb_dim = emb_dim
-    n_pts = n_pts
+def get_auto_encoder(model_path):
+    emb_dim = 128
+    n_pts = 2048
     ae = PointCloudAE(emb_dim, n_pts)
     ae.cuda()
     ae.load_state_dict(torch.load(model_path))
@@ -29,10 +29,11 @@ parser.add_argument('--data', type=str, default='real_test', help='val, real_tes
 parser.add_argument('--data_dir', type=str, default='data', help='data directory')
 parser.add_argument('--n_cat', type=int, default=6, help='number of object categories')
 parser.add_argument('--nv_prior', type=int, default=2048, help='number of vertices in shape priors')
-parser.add_argument('--model', type=str, default='', help='resume from saved model')
+parser.add_argument('--model', type=str, default='results/real_2048_128_ae/model_10.pth', help='resume from saved model')
 parser.add_argument('--n_pts', type=int, default=2048, help='number of foreground points')
 parser.add_argument('--img_size', type=int, default=192, help='cropped image size')
 parser.add_argument('--gpu', type=str, default='1', help='GPU to use')
+parser.add_argument('--ae_model', type=str, default='results/real_2048_128_ae/ae_model_10.pth', help='wandb online mode')
 opt = parser.parse_args()
 
 mean_shapes = np.load('assets/mean_points_emb.npy')
@@ -65,7 +66,7 @@ norm_color = transforms.Compose(
 
 def detect():
     # resume model
-    viz_pcd = True
+    viz_pcd = False
     # os.environ['CUDA_VISIBLE_DEVICES'] = opt.gpu
     opt.emb = 128
     estimator = DeformNet(opt.n_cat, opt.nv_prior, opt.emb)
@@ -81,11 +82,13 @@ def detect():
     inst_count = 0
     img_count = 0
     t_start = time.time()
+    auto_encoder_path = opt.ae_model
+    ae = get_auto_encoder(auto_encoder_path)
     for path in tqdm(img_list):
         img_path = os.path.join(opt.data_dir, path)
         raw_rgb = cv2.imread(img_path + '_color.png')[:, :, :3]
         raw_rgb = raw_rgb[:, :, ::-1]
-        raw_depth = load_depth(img_path)
+        raw_depth = load_pseudo_depth(img_path)
         # load mask-rcnn detection results
         img_path_parsing = img_path.split('/')
         mrcnn_path = os.path.join('results/mrcnn_results', opt.data, 'results_{}_{}_{}.pkl'.format(
@@ -154,6 +157,7 @@ def detect():
             torch.cuda.synchronize()
             t_now = time.time()
             
+            f_prior = ae(f_points,None)[1]
             assign_mat, deltas = estimator(f_points, f_rgb, f_choose, f_catId, f_prior)
             # assign_mat, deltas = estimator(f_rgb, f_choose, f_catId, f_prior)
             inst_shape = f_prior + deltas
