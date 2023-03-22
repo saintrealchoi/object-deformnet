@@ -11,7 +11,7 @@ from data.pose_dataset import PoseDataset
 from lib.utils import setup_logger, compute_sRT_errors
 from lib.align import estimateSimilarityTransform
 import configparser
-
+import json
 from tqdm import tqdm
 import wandb
 
@@ -24,8 +24,6 @@ def train_net(config):
     opt.read(config.config)
     opt = opt._sections['Arguments']
     opt = ArgsNamespace(**opt)
-    
-    
     opt.n_pts = int(opt.n_pts)
     opt.n_cat = int(opt.n_cat)
     opt.nv_prior= int(opt.nv_prior)
@@ -35,25 +33,29 @@ def train_net(config):
     opt.start_epoch=int(opt.start_epoch)
     opt.max_epoch=int(opt.max_epoch)
     opt.lr = float(opt.lr)
-    
+    opt.decay_rate = json.loads(opt.decay_rate)
+    opt.decay_epoch = json.loads(opt.decay_epoch)
         
     if opt.wandb =='online':
-        wandb.init(project='object-deform') 
-        wandb.run.name = 'pc2048'
+        wandb.init(project='205-object-deform') 
+        wandb.run.name = 'gt_model'
         
-    opt.decay_epoch = [0, 2, 5, 7, 10]
-    opt.decay_rate = [1.0, 0.6, 0.3, 0.1, 0.01]
+    # opt.decay_epoch = [0,3, 5]
+    # opt.decay_epoch = [0,5,10,15,20]
+    # opt.decay_rate = [1.0, 0.6, 0.01]
+    # opt.decay_rate = [1.0, 0.6, 0.3, 0.1, 0.01]
     opt.corr_wt = 1.0
     opt.cd_wt = 5.0
     opt.entropy_wt = 0.0001
-    opt.deform_wt = 0.01
+    opt.deform_wt = 1.0
+    # opt.deform_wt = 0.01
     # set result directory
     if not os.path.exists(opt.result_dir):
         os.makedirs(opt.result_dir)
     logger = setup_logger('train_log', os.path.join(opt.result_dir, 'log.txt'))
     for key, value in vars(opt).items():
         logger.info(key + ': ' + str(value))
-    os.environ['CUDA_VISIBLE_DEVICES'] = opt.gpu
+    # os.environ['CUDA_VISIBLE_DEVICES'] = opt.gpu
     # model & loss
     estimator = DeformNet(opt.n_cat, opt.nv_prior)
     estimator.cuda()
@@ -124,7 +126,8 @@ def train_net(config):
                 prior = prior.cuda()
                 sRT = sRT.cuda()
                 nocs = nocs.cuda()
-                assign_mat, deltas = estimator(points, rgb, choose, cat_id, prior)
+                # assign_mat, deltas = estimator(points, rgb, choose, cat_id, prior)
+                assign_mat, deltas = estimator(points, rgb, choose, cat_id, model)
                 loss, corr_loss, cd_loss, entropy_loss, deform_loss = criterion(assign_mat, deltas, prior, nocs, model)
                 optimizer.zero_grad()
                 if opt.wandb == 'online':
@@ -172,7 +175,8 @@ def train_net(config):
                 prior = prior.cuda()
                 sRT = sRT.cuda()
                 nocs = nocs.cuda()
-                assign_mat, deltas = estimator(points, rgb, choose, cat_id, prior)
+                assign_mat, deltas = estimator(points, rgb, choose, cat_id, model)
+                # assign_mat, deltas = estimator(points, rgb, choose, cat_id, prior)
                 loss, _, _, _, _ = criterion(assign_mat, deltas, prior, nocs, model)
                 # estimate pose and scale
                 inst_shape = prior + deltas
