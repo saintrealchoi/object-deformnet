@@ -113,6 +113,9 @@ class PSPNet(nn.Module):
         if backend == 'resnet18':
             self.feats = ResNet(BasicBlock, [2, 2, 2, 2])
             feat_dim = 512
+        elif backend == 'resnet50':
+            self.feats = ResNet(BasicBlock, [3, 4, 6, 3])
+            feat_dim = 512
         else:
             raise NotImplementedError
         self.psp = PSPModule(feat_dim, bins)

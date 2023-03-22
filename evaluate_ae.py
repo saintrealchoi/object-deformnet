@@ -92,7 +92,10 @@ def detect():
         img_path = os.path.join(opt.data_dir, path)
         raw_rgb = cv2.imread(img_path + '_color.png')[:, :, :3]
         raw_rgb = raw_rgb[:, :, ::-1]
-        raw_depth = load_pseudo_depth(img_path)
+        if img_path.split('/')[1] == 'Real':
+            raw_depth = load_pseudo_depth(img_path)
+        else:
+            raw_depth = load_depth(img_path)
         # load mask-rcnn detection results
         img_path_parsing = img_path.split('/')
         mrcnn_path = os.path.join('results/mrcnn_results', opt.data, 'results_{}_{}_{}.pkl'.format(
@@ -168,16 +171,16 @@ def detect():
             t_now = time.time()
             
             embedding, point_cloud = estimator(f_points, f_model)
-            # assign_mat, deltas = estimator(f_points, f_rgb, f_choose, f_catId, f_prior)
             
             pcd = o3d.geometry.PointCloud()
-            for i in range(num_insts):
-                pcd.points = o3d.utility.Vector3dVector(f_points[3].detach().cpu().numpy())
-                o3d.visualization.draw_geometries([pcd])
-                pcd.points = o3d.utility.Vector3dVector(f_model[3].detach().cpu().numpy())
-                o3d.visualization.draw_geometries([pcd])
-                pcd.points = o3d.utility.Vector3dVector(point_cloud[3].detach().cpu().numpy())
-                o3d.visualization.draw_geometries([pcd])
+            if viz_pcd == True:
+                for i in range(num_insts):
+                    pcd.points = o3d.utility.Vector3dVector(f_points[3].detach().cpu().numpy())
+                    o3d.visualization.draw_geometries([pcd])
+                    pcd.points = o3d.utility.Vector3dVector(f_model[3].detach().cpu().numpy())
+                    o3d.visualization.draw_geometries([pcd])
+                    pcd.points = o3d.utility.Vector3dVector(point_cloud[3].detach().cpu().numpy())
+                    o3d.visualization.draw_geometries([pcd])
             
             
 

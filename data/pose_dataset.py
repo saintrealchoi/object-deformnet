@@ -28,9 +28,9 @@ class PoseDataset(data.Dataset):
 
         assert source in ['CAMERA', 'Real', 'CAMERA+Real']
         assert mode in ['train', 'test']
-        img_list_path = ['CAMERA/train_list.txt', 'Real/train_list.txt',
+        img_list_path = ['CAMERA/train_list.txt', 'Real/test_list_subset_6.txt',
                          'CAMERA/val_list.txt', 'Real/test_list.txt']
-        model_file_path = ['obj_models/camera_train.pkl', 'obj_models/real_train.pkl',
+        model_file_path = ['obj_models/camera_train.pkl', 'obj_models/real_test.pkl',
                            'obj_models/camera_val.pkl', 'obj_models/real_test.pkl']
         if mode == 'train':
             del img_list_path[2:]
@@ -94,10 +94,12 @@ class PoseDataset(data.Dataset):
         img_path = os.path.join(self.data_dir, self.img_list[index])
         rgb = cv2.imread(img_path + '_color.png')[:, :, :3]
         rgb = rgb[:, :, ::-1]
-        if img_path.split('/')[1] == 'CAMERA':
-            depth = load_depth(img_path)
-        else:
-            depth = load_pseudo_depth(img_path)
+        # if img_path.split('/')[1] == 'CAMERA':
+        #     depth = load_depth(img_path)
+        # else:
+        #     depth = load_pseudo_depth(img_path)
+            
+        depth = load_depth(img_path)
         mask = cv2.imread(img_path + '_mask.png')[:, :, 2]
         coord = cv2.imread(img_path + '_coord.png')[:, :, :3]
         coord = coord[:, :, (2, 1, 0)]

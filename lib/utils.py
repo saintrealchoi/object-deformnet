@@ -173,8 +173,7 @@ def load_pseudo_depth(img_path):
     """ Load depth image from img_path. """
     depth_path = img_path + '_depth.png'
     depth = cv2.imread(depth_path, -1)
-    # TODO: Pseudo Depth for real dataset
-    pseudo_depth_path = '/home/choisj/git/CenterSnap/data/inference/_4/' + '/'.join(img_path.split('/')[2:]) + '_depth.png'
+    pseudo_depth_path = 'data/pseudo_depth/' + '/'.join(img_path.split('/')[2:]) + '_depth.png'
     pseudo_depth = cv2.imread(pseudo_depth_path,-1)
     mask = (depth==0)
     depth[mask] = pseudo_depth[mask]

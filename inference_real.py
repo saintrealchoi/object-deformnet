@@ -35,12 +35,11 @@ from lib.utils import compute_RT_overlaps,compute_sRT_errors,compute_RT_errors
 
 category = {1:'bottle',2:'bowl',3:'camera',4:'can',5:'laptop',6:'mug'}
 parser = argparse.ArgumentParser()
-parser.add_argument('--dataset', type=str, default='CAMERA+Real', help='CAMERA or CAMERA+Real')
 parser.add_argument('--data_dir', type=str, default='data', help='data directory')
 parser.add_argument('--data', type=str, default='real_test', help='val, real_test')
-parser.add_argument('--n_pts', type=int, default=1024, help='number of foreground points')
+parser.add_argument('--n_pts', type=int, default=2048, help='number of foreground points')
 parser.add_argument('--n_cat', type=int, default=6, help='number of object categories')
-parser.add_argument('--nv_prior', type=int, default=1024, help='number of vertices in shape priors')
+parser.add_argument('--nv_prior', type=int, default=2048, help='number of vertices in shape priors')
 parser.add_argument('--img_size', type=int, default=192, help='cropped image size')
 parser.add_argument('--batch_size', type=int, default=64, help='batch size')
 parser.add_argument('--num_workers', type=int, default=10, help='number of data loading workers')
@@ -48,9 +47,9 @@ parser.add_argument('--gpu', type=str, default='0', help='GPU to use')
 parser.add_argument('--lr', type=float, default=0.0001, help='initial learning rate')
 parser.add_argument('--start_epoch', type=int, default=1, help='which epoch to start')
 parser.add_argument('--max_epoch', type=int, default=25, help='max number of epochs to train')
-parser.add_argument('--resume_model', type=str, default='', help='resume from saved model')
-parser.add_argument('--model', type=str, default='/home/choisj/git/sj/object-deformnet/results/real/model_50.pth', help='evaluate model')
-parser.add_argument('--result_dir', type=str, default='results/camera_real', help='directory to save train results')
+parser.add_argument('--model', type=str, default='results/ft_real_2048_128_ae/model_02.pth', help='evaluate model')
+parser.add_argument('--result_dir', type=str, default='results/real_inference', help='directory to save train results')
+parser.add_argument('--ae_model', type=str, default='results/ft_real_2048_128_ae/ae_model_02.pth', help='wandb online mode')
 
 mean_shapes = np.load('assets/mean_points_emb.npy')
 opt = parser.parse_args()
@@ -78,15 +77,6 @@ norm_color = transforms.Compose(
      transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])]
 )
 
-def get_auto_encoder(model_path):
-  emb_dim = 512
-  n_pts = 1024
-  ae = PointCloudAE(emb_dim, n_pts)
-  ae.cuda()
-  ae.load_state_dict(torch.load(model_path))
-  ae.eval()
-  return ae
-
 def inference(
     hparams,
     data_dir, 
@@ -94,12 +84,18 @@ def inference(
     min_confidence=0.1,
     use_gpu=True,
 ):
+    opt.emb = 128
     model = DeformNet(opt.n_cat, opt.nv_prior)
     model.eval()
     
+    ae = PointCloudAE(opt.emb, opt.n_pts)
+    ae.cuda()
+    ae.load_state_dict(torch.load(opt.ae_model))
+    ae.eval()
+    
     if use_gpu:
         model.cuda()
-    data_path = open(os.path.join(data_dir, 'Real', 'test_list_subset.txt')).read().splitlines()
+    data_path = open(os.path.join(data_dir, 'Real', 'test_list_subset_2.txt')).read().splitlines()
     
     _CAMERA = camera.NOCS_Real()
     for i, img_path in enumerate(data_path):

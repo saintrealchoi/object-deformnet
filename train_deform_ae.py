@@ -82,7 +82,7 @@ def train_net():
         estimator.load_state_dict(torch.load(opt.resume_model))
     # dataset
     train_dataset = PoseDataset(opt.dataset, 'train', opt.data_dir, opt.n_pts, opt.img_size)
-    val_dataset = PoseDataset('CAMERA+Real', 'test', opt.data_dir, opt.n_pts, opt.img_size)
+    val_dataset = PoseDataset(opt.dataset, 'test', opt.data_dir, opt.n_pts, opt.img_size)
     # val_dataset = PoseDataset(opt.dataset, 'test', opt.data_dir, opt.n_pts, opt.img_size)
     # start training
     st_time = time.time()

@@ -17,8 +17,8 @@ import wandb
 
 
 parser = argparse.ArgumentParser()
-# parser.add_argument('--dataset', type=str, default='CAMERA', help='CAMERA or CAMERA+Real')
-parser.add_argument('--dataset', type=str, default='Real', help='CAMERA or CAMERA+Real')
+parser.add_argument('--dataset', type=str, default='CAMERA', help='CAMERA or CAMERA+Real')
+# parser.add_argument('--dataset', type=str, default='Real', help='CAMERA or CAMERA+Real')
 parser.add_argument('--data_dir', type=str, default='data', help='data directory')
 parser.add_argument('--n_pts', type=int, default=2048, help='number of foreground points')
 parser.add_argument('--n_cat', type=int, default=6, help='number of object categories')
@@ -29,33 +29,31 @@ parser.add_argument('--num_workers', type=int, default=10, help='number of data 
 parser.add_argument('--gpu', type=str, default='0', help='GPU to use')
 parser.add_argument('--lr', type=float, default=0.0001, help='initial learning rate')
 parser.add_argument('--start_epoch', type=int, default=1, help='which epoch to start')
-# parser.add_argument('--max_epoch', type=int, default=50, help='max number of epochs to train')
-parser.add_argument('--max_epoch', type=int, default=12, help='max number of epochs to train')
-parser.add_argument('--resume_model', type=str, default='results/camera_2048_128_ae/model_50.pth', help='resume from saved model')
-# parser.add_argument('--resume_model', type=str, default='', help='resume from saved model')
-parser.add_argument('--result_dir', type=str, default='results/real_2048_128_ae', help='directory to save train results')
+parser.add_argument('--max_epoch', type=int, default=50, help='max number of epochs to train')
+# parser.add_argument('--max_epoch', type=int, default=12, help='max number of epochs to train')
+# parser.add_argument('--resume_model', type=str, default='results/real_2048_128_ae/model_50.pth', help='resume from saved model')
+parser.add_argument('--resume_model', type=str, default='', help='resume from saved model')
+parser.add_argument('--result_dir', type=str, default='results/camera_without_norm', help='directory to save train results')
 parser.add_argument('--wandb', type=str, default='online', help='wandb online mode')
-parser.add_argument('--ae_model', type=str, default='/home/choisj/git/sj/object-deformnet/results/camera_2048_128_ae/ae_model_50.pth', help='wandb online mode')
+parser.add_argument('--ae_model', type=str, default='results/ae_train/model_12.pth', help='wandb online mode')
+# parser.add_argument('--ae_model', type=str, default='results/ae_train/model_12.pth', help='wandb online mode')
 
 opt = parser.parse_args()
 
 # opt.decay_epoch = [0, 3, 5]
-opt.decay_epoch = [0, 6, 10]
-# opt.decay_epoch = [0, 5, 10, 15, 20]
-# opt.decay_epoch = [0, 10, 20, 30, 40]
-opt.decay_rate = [1.0, 0.6, 0.01]
-# opt.decay_rate = [1.0, 0.6, 0.3, 0.1, 0.01]
+# opt.decay_epoch = [0, 6, 10]
+opt.decay_epoch = [0, 10, 20, 30, 40]
+# opt.decay_rate = [1.0, 0.6, 0.01]
+opt.decay_rate = [1.0, 0.6, 0.3, 0.1, 0.01]
 opt.corr_wt = 1.0
-# opt.cd_wt = 25.0
-opt.cd_wt = 10.0
+opt.cd_wt = 5.0
 opt.entropy_wt = 0.0001
-# opt.deform_wt = 0.05
 opt.deform_wt = 0.01
 opt.emb = 128
 
 if opt.wandb =='online':
     wandb.init(project='ae-object-deform') 
-    wandb.run.name = 'pseudo_depth + ae'
+    wandb.run.name = 'ae+without_norm'
     
 def get_auto_encoder(model_path):
     emb_dim = 128
@@ -82,11 +80,15 @@ def train_net():
         estimator.load_state_dict(torch.load(opt.resume_model))
     # dataset
     train_dataset = PoseDataset(opt.dataset, 'train', opt.data_dir, opt.n_pts, opt.img_size)
-    val_dataset = PoseDataset('CAMERA+Real', 'test', opt.data_dir, opt.n_pts, opt.img_size)
-    # val_dataset = PoseDataset(opt.dataset, 'test', opt.data_dir, opt.n_pts, opt.img_size)
+    val_dataset = PoseDataset(opt.dataset, 'test', opt.data_dir, opt.n_pts, opt.img_size)
+    # val_dataset = PoseDataset('CAMERA+Real', 'test', opt.data_dir, opt.n_pts, opt.img_size)
     # start training
     st_time = time.time()
-    train_steps = 1500
+    if opt.dataset == 'Real':
+        train_steps = train_dataset.length // opt.batch_size
+    else:
+        train_steps = 1500
+        
     global_step = train_steps * (opt.start_epoch - 1)
     n_decays = len(opt.decay_epoch)
     assert len(opt.decay_rate) == n_decays
@@ -97,8 +99,10 @@ def train_net():
     indices = []
     page_start = -train_size
     
-    auto_encoder_path = opt.ae_model
-    ae = get_auto_encoder(auto_encoder_path)
+    ae = PointCloudAE(opt.emb, opt.n_pts)
+    ae.cuda()
+    if opt.ae_model != '':
+        ae.load_state_dict(torch.load(opt.ae_model))
     
     for epoch in range(opt.start_epoch, opt.max_epoch + 1):
         # train one epoch
@@ -136,11 +140,7 @@ def train_net():
         train_dataloader = torch.utils.data.DataLoader(train_dataset, batch_size=opt.batch_size, sampler=train_sampler,
                                                        num_workers=opt.num_workers, pin_memory=True)
         estimator.train()
-        
-        # auto_encoder_path = os.path.join('/home/choisj/git/sj/object-deformnet/results/ae_points/model_50.pth')
-        # ae = get_auto_encoder(auto_encoder_path)
-        
-        # for i, data in tqdm(enumerate(train_dataloader, 1)):
+        ae.train()
         with tqdm(train_dataloader, unit='batch') as tepoch:
             for i,data in enumerate(tepoch):
                 tepoch.set_description(f"Epoch {epoch}")
@@ -189,58 +189,64 @@ def train_net():
         easy_easy_success = np.zeros((opt.n_cat,), dtype=int)        # 10 degree and 10 cm
         iou_success = np.zeros((opt.n_cat,), dtype=int)              # relative scale error < 0.1
         # sample validation subset
-        val_size = 500
+        
+        if opt.dataset == 'Real':
+            val_size = val_dataset.length
+        else:
+            val_size = 500
         val_idx = random.sample(list(range(val_dataset.length)), val_size)
         val_sampler = torch.utils.data.sampler.SubsetRandomSampler(val_idx)
         val_dataloader = torch.utils.data.DataLoader(val_dataset, batch_size=1, sampler=val_sampler,
                                                      num_workers=opt.num_workers, pin_memory=True)
         estimator.eval()
-        with tqdm(val_dataloader, unit='batch') as tepoch:
-            for i,data in enumerate(tepoch):
-                points, rgb, choose, cat_id, model, prior, sRT, nocs = data
-                points = points.cuda()
-                rgb = rgb.cuda()
-                choose = choose.cuda()
-                cat_id = cat_id.cuda()
-                model = model.cuda()
-                prior = prior.cuda()
-                sRT = sRT.cuda()
-                nocs = nocs.cuda()
-                
-                prior = ae(points,None)[1]
-                
-                assign_mat, deltas = estimator(points, rgb, choose, cat_id, prior)
-                loss, _, _, _, _ = criterion(assign_mat, deltas, prior, nocs, model)
-                # estimate pose and scale
-                inst_shape = prior + deltas
-                assign_mat = F.softmax(assign_mat, dim=2)
-                nocs_coords = torch.bmm(assign_mat, inst_shape)
-                nocs_coords = nocs_coords.detach().cpu().numpy()[0]
-                points = points.cpu().numpy()[0]
-                # use choose to remove repeated points
-                choose = choose.cpu().numpy()[0]
-                _, choose = np.unique(choose, return_index=True)
-                nocs_coords = nocs_coords[choose, :]
-                points = points[choose, :]
-                _, _, _, pred_sRT = estimateSimilarityTransform(nocs_coords, points)
-                # evaluate pose
-                cat_id = cat_id.item()
-                if pred_sRT is not None:
-                    sRT = sRT.detach().cpu().numpy()[0]
-                    R_error, T_error, IoU = compute_sRT_errors(pred_sRT, sRT)
-                    if R_error < 5 and T_error < 0.05:
-                        strict_success[cat_id] += 1
-                    if R_error < 5 and T_error < 0.1:
-                        strict_easy_success[cat_id] += 1
-                    if R_error < 10 and T_error < 0.1:
-                        easy_easy_success[cat_id] += 1
-                    if R_error < 10 and T_error < 0.05:
-                        easy_success[cat_id] += 1
-                    if IoU < 0.1:
-                        iou_success[cat_id] += 1
-                total_count[cat_id] += 1
-                val_loss += loss.item()
-                tepoch.set_postfix(loss=loss.item())
+        ae.eval()
+        with torch.no_grad():
+            with tqdm(val_dataloader, unit='batch') as tepoch:
+                for i,data in enumerate(tepoch):
+                    points, rgb, choose, cat_id, model, prior, sRT, nocs = data
+                    points = points.cuda()
+                    rgb = rgb.cuda()
+                    choose = choose.cuda()
+                    cat_id = cat_id.cuda()
+                    model = model.cuda()
+                    prior = prior.cuda()
+                    sRT = sRT.cuda()
+                    nocs = nocs.cuda()
+                    
+                    prior = ae(points,None)[1]
+                    
+                    assign_mat, deltas = estimator(points, rgb, choose, cat_id, prior)
+                    loss, _, _, _, _ = criterion(assign_mat, deltas, prior, nocs, model)
+                    # estimate pose and scale
+                    inst_shape = prior + deltas
+                    assign_mat = F.softmax(assign_mat, dim=2)
+                    nocs_coords = torch.bmm(assign_mat, inst_shape)
+                    nocs_coords = nocs_coords.detach().cpu().numpy()[0]
+                    points = points.cpu().numpy()[0]
+                    # use choose to remove repeated points
+                    choose = choose.cpu().numpy()[0]
+                    _, choose = np.unique(choose, return_index=True)
+                    nocs_coords = nocs_coords[choose, :]
+                    points = points[choose, :]
+                    _, _, _, pred_sRT = estimateSimilarityTransform(nocs_coords, points)
+                    # evaluate pose
+                    cat_id = cat_id.item()
+                    if pred_sRT is not None:
+                        sRT = sRT.detach().cpu().numpy()[0]
+                        R_error, T_error, IoU = compute_sRT_errors(pred_sRT, sRT)
+                        if R_error < 5 and T_error < 0.05:
+                            strict_success[cat_id] += 1
+                        if R_error < 5 and T_error < 0.1:
+                            strict_easy_success[cat_id] += 1
+                        if R_error < 10 and T_error < 0.1:
+                            easy_easy_success[cat_id] += 1
+                        if R_error < 10 and T_error < 0.05:
+                            easy_success[cat_id] += 1
+                        if IoU < 0.1:
+                            iou_success[cat_id] += 1
+                    total_count[cat_id] += 1
+                    val_loss += loss.item()
+                    tepoch.set_postfix(loss=loss.item())
         # compute accuracy
         strict_acc = 100 * (strict_success / total_count)
         strict_easy_acc = 100 * (strict_easy_success / total_count)

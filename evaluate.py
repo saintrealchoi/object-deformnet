@@ -11,7 +11,7 @@ import torch.nn.functional as F
 import torchvision.transforms as transforms
 from lib.network import DeformNet
 from lib.align import estimateSimilarityTransform
-from lib.utils import load_depth, get_bbox, compute_mAP, plot_mAP
+from lib.utils import load_depth, load_pseudo_depth, get_bbox, compute_mAP, plot_mAP
 import open3d as o3d
 from lib.auto_encoder import PointCloudAE
 
@@ -29,10 +29,11 @@ parser.add_argument('--data', type=str, default='real_test', help='val, real_tes
 parser.add_argument('--data_dir', type=str, default='data', help='data directory')
 parser.add_argument('--n_cat', type=int, default=6, help='number of object categories')
 parser.add_argument('--nv_prior', type=int, default=2048, help='number of vertices in shape priors')
-parser.add_argument('--model', type=str, default='', help='resume from saved model')
+parser.add_argument('--model', type=str, default='results/re_ft_real_2048_128_ae/model_12.pth', help='resume from saved model')
 parser.add_argument('--n_pts', type=int, default=2048, help='number of foreground points')
 parser.add_argument('--img_size', type=int, default=192, help='cropped image size')
-parser.add_argument('--gpu', type=str, default='1', help='GPU to use')
+parser.add_argument('--gpu', type=str, default='0', help='GPU to use')
+parser.add_argument('--ae_model', type=str, default='results/re_ft_real_2048_128_ae/ae_model_12.pth', help='wandb online mode')
 opt = parser.parse_args()
 
 mean_shapes = np.load('assets/mean_points_emb.npy')
@@ -65,13 +66,18 @@ norm_color = transforms.Compose(
 
 def detect():
     # resume model
-    viz_pcd = True
+    viz_pcd = False
     # os.environ['CUDA_VISIBLE_DEVICES'] = opt.gpu
     opt.emb = 128
     estimator = DeformNet(opt.n_cat, opt.nv_prior, opt.emb)
     estimator.cuda()
     estimator.load_state_dict(torch.load(opt.model))
     estimator.eval()
+    
+    ae = PointCloudAE(opt.emb, opt.n_pts)
+    ae.cuda()
+    ae.load_state_dict(torch.load(opt.ae_model))
+    ae.eval()
     # get test data list
     img_list = [os.path.join(file_path.split('/')[0], line.rstrip('\n'))
                 for line in open(os.path.join(opt.data_dir, file_path))]
@@ -85,7 +91,12 @@ def detect():
         img_path = os.path.join(opt.data_dir, path)
         raw_rgb = cv2.imread(img_path + '_color.png')[:, :, :3]
         raw_rgb = raw_rgb[:, :, ::-1]
-        raw_depth = load_depth(img_path)
+        
+        if img_path.split('/')[1] == 'Real':
+            raw_depth = load_pseudo_depth(img_path)
+        else:
+            raw_depth = load_depth(img_path)
+            
         # load mask-rcnn detection results
         img_path_parsing = img_path.split('/')
         mrcnn_path = os.path.join('results/mrcnn_results', opt.data, 'results_{}_{}_{}.pkl'.format(
@@ -154,8 +165,9 @@ def detect():
             torch.cuda.synchronize()
             t_now = time.time()
             
-            assign_mat, deltas = estimator(f_points, f_rgb, f_choose, f_catId, f_prior)
-            # assign_mat, deltas = estimator(f_rgb, f_choose, f_catId, f_prior)
+            with torch.no_grad():
+                f_prior = ae(f_points,None)[1]
+                assign_mat, deltas = estimator(f_points, f_rgb, f_choose, f_catId, f_prior)
             inst_shape = f_prior + deltas
             
             assign_mat = F.softmax(assign_mat, dim=2)
@@ -165,17 +177,6 @@ def detect():
             pcd = o3d.geometry.PointCloud()
             if viz_pcd == True:
                 SEE = 3
-                # auto_encoder_path = os.path.join('/home/choisj/git/sj/object-deformnet/results/ae_points/model_2048_512_50.pth')
-                # ae = get_auto_encoder(auto_encoder_path,512,2048)
-                # temp = ae(torch.unsqueeze(f_points[SEE],0),None)
-                # temp = torch.squeeze(temp[1],0)
-                # pcd.points = o3d.utility.Vector3dVector(temp.detach().cpu().numpy())
-                # o3d.visualization.draw_geometries([pcd])
-                
-                # GT point 
-                # import pickle
-                # with open('data_open.pickle', 'wb') as f:
-                #     pickle.dump(f_prior[SEE].detach().cpu().numpy(), f)
                 pcd.points = o3d.utility.Vector3dVector(f_points[SEE].detach().cpu().numpy())
                 o3d.visualization.draw_geometries([pcd])
                 # prior (mean shape)
