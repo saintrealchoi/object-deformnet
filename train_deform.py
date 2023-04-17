@@ -37,7 +37,7 @@ def train_net(config):
     opt.decay_epoch = json.loads(opt.decay_epoch)
         
     if opt.wandb =='online':
-        wandb.init(project='205-object-deform') 
+        wandb.init(project='phocl-deform') 
         wandb.run.name = 'gt_model'
         
     # opt.decay_epoch = [0,3, 5]
@@ -64,7 +64,9 @@ def train_net(config):
         estimator.load_state_dict(torch.load(opt.resume_model))
     # dataset
     train_dataset = PoseDataset(opt.dataset, 'train', opt.data_dir, opt.n_pts, opt.img_size)
-    val_dataset = PoseDataset('CAMERA+Real', 'test', opt.data_dir, opt.n_pts, opt.img_size)
+    # train_dataset = PoseDataset(opt.dataset, 'train', opt.data_dir, opt.n_pts, opt.img_size)
+    val_dataset = PoseDataset(opt.dataset, 'test', opt.data_dir, opt.n_pts, opt.img_size)
+    # val_dataset = PoseDataset('CAMERA+Real', 'test', opt.data_dir, opt.n_pts, opt.img_size)
     # start training
     st_time = time.time()
     train_steps = 1500
@@ -243,6 +245,6 @@ def train_net(config):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--config', default= 'configs/camera_1024.ini', type=str, help='path to configuration file')
+    parser.add_argument('--config', default= 'configs/phocal_2048.ini', type=str, help='path to configuration file')
     opt = parser.parse_args()
     train_net(opt)

@@ -33,16 +33,16 @@ def visualize_shape(name, shape_list, result_dir):
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--h5_file', type=str, default='data/obj_models/ShapeNetCore_2048.h5', help='h5py file')
+parser.add_argument('--h5_file', type=str, default='data/obj_models_small_size/ShapeNetCore_2048.h5', help='h5py file')
 # parser.add_argument('--model', type=str, default='results/ae_points/model_50.pth',  help='resume model')
 # parser.add_argument('--result_dir', type=str, default='results/ae_points', help='directory to save mean shapes')
-parser.add_argument('--model', type=str, default='results/ae_points/model_50.pth',  help='resume model')
-parser.add_argument('--result_dir', type=str, default='ae_test2', help='directory to save mean shapes')
+parser.add_argument('--model', type=str, default='results/ae_points/model_200.pth',  help='resume model')
+parser.add_argument('--result_dir', type=str, default='ae_test', help='directory to save mean shapes')
 parser.add_argument('--gpu', type=str, default='0', help='GPU to use')
 opt = parser.parse_args()
 
 opt.emb_dim = 512
-opt.n_cat = 6
+opt.n_cat = 8
 opt.n_pts = 2048
 
 os.environ['CUDA_VISIBLE_DEVICES'] = opt.gpu
@@ -87,8 +87,12 @@ y_laptop = Y[np.where(catId == 4)[0], :]
 s_laptop = plt.scatter(y_laptop[:, 0], y_laptop[:, 1], s=20, marker='P', c='tab:purple')
 y_mug = Y[np.where(catId == 5)[0], :]
 s_mug = plt.scatter(y_mug[:, 0], y_mug[:, 1], s=20, marker='v', c='tab:brown')
-plt.legend((s_bottle, s_bowl, s_camera, s_can, s_laptop, s_mug),
-           ('bottle', 'bowl', 'camera', 'can', 'laptop', 'mug'),
+y_remote = Y[np.where(catId == 6)[0], :]
+s_remote = plt.scatter(y_remote[:, 0], y_remote[:, 1], s=20, marker='D', c='tab:red')
+y_teapot = Y[np.where(catId == 7)[0], :]
+s_teapot = plt.scatter(y_teapot[:, 0], y_teapot[:, 1], s=20, marker='|', c='tab:pink')
+plt.legend((s_bottle, s_bowl, s_camera, s_can, s_laptop, s_mug,s_remote,s_teapot),
+           ('bottle', 'bowl', 'camera', 'can', 'laptop', 'mug','remote','teapot'),
            loc='best', ncol=1, fontsize=8, frameon=False)
 plt.xticks([])
 plt.yticks([])
@@ -96,7 +100,7 @@ plt.savefig(os.path.join(opt.result_dir, 'visual_embedding.png'), bbox_inches='t
 
 #  mean embedding and mean shape
 mean_emb = np.empty((opt.n_cat, opt.emb_dim), dtype=np.float)
-catId_to_name = {0: 'bottle', 1: 'bowl', 2: 'camera', 3: 'can', 4: 'laptop', 5: 'mug'}
+catId_to_name = {0: 'bottle', 1:'box',2:'can',3:'cup',4:'cutlery',5:'glass',6:'remote',7:'teapot'}
 mean_points = np.empty((opt.n_cat, opt.n_pts, 3), dtype=np.float)
 for i in range(opt.n_cat):
     mean = np.mean(embedding[np.where(catId==i)[0], :], axis=0, keepdims=False)
@@ -108,7 +112,7 @@ for i in range(opt.n_cat):
     # save point cloud and visualize
     pcd = o3d.geometry.PointCloud()
     pcd.points = o3d.utility.Vector3dVector(mean_shape)
-    # visualize_shape(catId_to_name[i], [pcd], opt.result_dir)
+    visualize_shape(catId_to_name[i], [pcd], opt.result_dir)
 # save results
 np.save(os.path.join(opt.result_dir, 'mean_embedding'), mean_emb)
 np.save(os.path.join(opt.result_dir, 'mean_points_emb'), mean_points)

@@ -10,6 +10,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 import _pickle as cPickle
 from tqdm import tqdm
+import numpy as np
+import re
+
 
 
 def setup_logger(logger_name, log_file, level=logging.INFO):
@@ -825,3 +828,32 @@ def draw_detections(img, out_dir, data_name, img_id, intrinsics, pred_sRT, pred_
     cv2.imwrite(out_path, img)
     # cv2.imshow('vis', img)
     # cv2.waitKey(0)
+
+
+# Calculate x,y,z bbox size
+def calculate_xyz_bbox_size(obj_file_path):
+    # Open the .obj file
+    with open('/data/obj_models/real_test/bottle_red_stanford_norm.obj', 'r') as f:
+        lines = f.readlines()
+
+    # Extract the vertex coordinates from the .obj file
+    vertices = []
+    for line in lines:
+        if line.startswith('v '):
+            vertex = re.split('\s+', line.strip())[1:]
+            vertex = [float(v) for v in vertex]
+            vertices.append(vertex)
+    vertices = np.array(vertices)
+
+    # Compute the dimensions of the bounding box along each axis
+    min_point = np.min(vertices, axis=0)
+    max_point = np.max(vertices, axis=0)
+    x_size = max_point[0] - min_point[0]
+    y_size = max_point[1] - min_point[1]
+    z_size = max_point[2] - min_point[2]
+
+    f.close()
+    
+    return x_size,y_size,z_size
+    
+    
